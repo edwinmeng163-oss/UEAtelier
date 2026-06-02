@@ -25,6 +25,7 @@
 #include "Serialization/JsonWriter.h"
 #include "Styling/AppStyle.h"
 #include "STaskAtlasWindow.h"
+#include "UnrealMcpEngineCompat.h"
 #include "UnrealMcpModule.h"
 #include "UnrealMcpSettings.h"
 #include "UnrealMcpToolRegistry.h"
@@ -633,7 +634,7 @@ namespace UnrealMcpChat
 
 		for (int32 Index = 0; Index < Fields.Num(); ++Index)
 		{
-			const TSharedPtr<FJsonValue>* ValuePtr = CurrentObject->Values.Find(Fields[Index]);
+			const TSharedPtr<FJsonValue>* ValuePtr = UnrealMcp::Compat::FindJsonValue(*CurrentObject, Fields[Index]);
 			if (!ValuePtr || !ValuePtr->IsValid())
 			{
 				return false;

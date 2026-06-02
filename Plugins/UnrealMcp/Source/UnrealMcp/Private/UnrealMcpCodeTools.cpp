@@ -14,6 +14,7 @@
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
+#include "UnrealMcpEngineCompat.h"
 #include "UnrealMcpHashUtils.h"
 #include "UnrealMcpModule.h"
 #include "UnrealMcpSelfExtensionInternal.h"
@@ -885,8 +886,8 @@ namespace UnrealMcp
 			bool bEngineAssociationChanged = false;
 			for (const FString& Key : Keys)
 			{
-				const TSharedPtr<FJsonValue>* BeforeValue = BeforeObject->Values.Find(Key);
-				const TSharedPtr<FJsonValue>* AfterValue = AfterObject->Values.Find(Key);
+				const TSharedPtr<FJsonValue>* BeforeValue = UnrealMcp::Compat::FindJsonValue(*BeforeObject, Key);
+				const TSharedPtr<FJsonValue>* AfterValue = UnrealMcp::Compat::FindJsonValue(*AfterObject, Key);
 				const FString BeforeText = BeforeValue ? CodeToolsJsonValueToComparableString(*BeforeValue) : TEXT("<missing>");
 				const FString AfterText = AfterValue ? CodeToolsJsonValueToComparableString(*AfterValue) : TEXT("<missing>");
 				if (BeforeText == AfterText)
