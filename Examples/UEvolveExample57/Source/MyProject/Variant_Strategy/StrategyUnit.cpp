@@ -118,20 +118,17 @@ bool AStrategyUnit::MoveToLocation(const FVector& Location, float AcceptanceRadi
 			case EPathFollowingRequestResult::Failed:
 
 				return false;
-				break;
 
 			// already at goal. Return true and call the move completed delegate
 			case EPathFollowingRequestResult::AlreadyAtGoal:
 
 				OnMoveCompleted.Broadcast(this);
 				return true;
-				break;
 
 			// move successfully scheduled. Return true
 			case EPathFollowingRequestResult::RequestSuccessful:
 
 				return true;
-				break;
 		}
 	}
 
