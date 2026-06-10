@@ -16,7 +16,7 @@ Current plugin metadata:
 ```text
 Plugins/UnrealMcp/UnrealMcp.uplugin
 FriendlyName: UEAtelier
-VersionName: 0.32.1
+VersionName: 0.32.2
 EngineVersion: 5.6.0
 Type: Editor plugin
 Required plugin: PythonScriptPlugin
@@ -186,7 +186,30 @@ CLI <-> Chat Panel sync tools (chat_inject_user_input, chat_history_tail,
 chat_tool_log_tail) and hardens Task Atlas eligibility against external-client
 registry-miss noise.
 
-Current project status: v0.32.1 (2026-06-10) is a platform-coverage patch
+Current project status: v0.32.2 (2026-06-11) is an MCP protocol conformance
+patch on v0.32.1. codex-cli 0.132 moved its MCP client to the official rmcp
+0.15 Rust SDK, whose strict untagged-result parsing mis-read our tools/list
+response — it carried a non-spec top-level `structuredContent`
+`{toolsListVersion}` — as a CallToolResult, failing MCP client startup with
+"MCP startup failed: Unexpected response type" and hiding every unreal.*
+tool from codex sessions. The patch strips that field (the chat panel reads
+the version counter in-process; no wire consumer existed) and pins the wire
+with two guardrail layers: pure UnrealMcp::Protocol response builders
+(UnrealMcpProtocolBuilders.h) backed by five exact-key UnrealMcp.Protocol.*
+Automation tests (initialize / ping / tools-list with an explicit
+structuredContent-absent regression pin / tool-call / JSON-RPC envelopes),
+plus an official @modelcontextprotocol/sdk conformance smoke
+(Tools/UnrealMcpCodexBridge/test-sdk-conformance.ts, devDependency-only)
+wired into the Stage 2 release SOP as a required gate. The bridge README
+gains a tested-client matrix (codex-cli 0.130.0 probe line; 0.132.0 / rmcp
+0.15 current verified line) with a Codex-Desktop auto-update caveat. The
+stale UnrealMcp.UserToolListVersion wire test flipped to assert omission.
+Tool count stays 190 (visible tools/list count stays 178); UE 5.6 + 5.7
+dual-engine builds pass and full automation converges to the two known
+failures (RunRecoversStale, PieSmoke.MapValidation). Trilingual notes at
+`Docs/Release-2026-06c.md`.
+
+Earlier project status: v0.32.1 (2026-06-10) is a platform-coverage patch
 on v0.32.0. The Codex CLI subprocess provider now works on Windows: direct
 codex.exe spawn with no shell intermediary, MSVC CRT-quoted argv (UE
 auto-quotes the URL so the builder excludes the binary path), .exe-only
