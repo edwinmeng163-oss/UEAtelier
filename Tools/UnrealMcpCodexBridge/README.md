@@ -13,11 +13,15 @@ ws://127.0.0.1:8766/uevolve
 
 ## Wire Framing Decision
 
-Codex CLI version tested:
+Tested clients:
 
 ```text
-codex-cli 0.130.0
+codex-cli 0.130.0 - original wire-framing probe
+codex-cli 0.132.0 / rmcp 0.15 - current verified line; strict untagged-result parsing rejects non-spec result keys
 ```
+
+Codex Desktop auto-updates the CLI, so re-verify this matrix after Codex
+updates with `codex --version`.
 
 The Unix listener created by:
 

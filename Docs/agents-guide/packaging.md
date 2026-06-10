@@ -137,10 +137,13 @@ Every projectroot zip must be e2e-tested before tag-publish:
 4. Launch editor with `-nullrhi -unattended`; poll for `LogUnrealMcp:`
    listening and `Engine is initialized`.
 5. Confirm port 8765 is bound.
-6. Run smoke calls for `tools/list`,
+6. Run `bun install --cwd Tools/UnrealMcpCodexBridge` once per machine, then
+   run `bun run --cwd Tools/UnrealMcpCodexBridge test-sdk-conformance.ts`
+   against the running editor endpoint.
+7. Run smoke calls for `tools/list`,
    `unreal.editor.python_runtime_info`, and
    `unreal.mcp_apply_scaffold` dry run for `unreal.fps.bootstrap`.
-7. Kill the editor, wait for port 8765 to free, and remove the temp project and
+8. Kill the editor, wait for port 8765 to free, and remove the temp project and
    log.
 
 If the scaffold dry run fails on a missing scaffold file, suspect a packager

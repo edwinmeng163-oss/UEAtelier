@@ -6,7 +6,11 @@
   "scripts": {
     "start": "bun run src/index.ts",
     "smoke": "bun run test-client.ts",
-    "mcp-roundtrip": "bun run test-mcp-roundtrip.ts"
+    "mcp-roundtrip": "bun run test-mcp-roundtrip.ts",
+    "sdk-conformance": "bun run test-sdk-conformance.ts"
   },
-  "dependencies": {}
+  "dependencies": {},
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0"
+  }
 }
