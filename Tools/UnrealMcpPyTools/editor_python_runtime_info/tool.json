@@ -1,0 +1,31 @@
+{
+  "name": "user.editor_python_runtime_info",
+  "category": "editor",
+  "title": "Editor Python Runtime Info",
+  "description": "Read-only Python user tool that reports Unreal Editor Python runtime details for smoke verification.",
+  "exposure": "visible",
+  "riskLevel": "read_only",
+  "implementationTrack": "python",
+  "pythonHandlerSha256": "56f6f019a385406e59571db5d781cf5532d7225516c78253c1ce47bae7facb39",
+  "importAllowlist": [
+    "subprocess"
+  ],
+  "requiresWrite": false,
+  "requiresBuild": false,
+  "requiresExternalProcess": false,
+  "requiresRestart": false,
+  "requiresProjectMemory": false,
+  "requiresLock": false,
+  "dryRunSupport": false,
+  "preflightSupport": false,
+  "postcheckSupport": true,
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {},
+    "required": []
+  },
+  "owner": "UEAtelier",
+  "docsPath": "Tools/UnrealMcpPyTools/editor_python_runtime_info/main.py",
+  "reason": "Committed read-only dev-host smoke tool for verifying the Python user-tool runtime; not part of the canonical core registry."
+}

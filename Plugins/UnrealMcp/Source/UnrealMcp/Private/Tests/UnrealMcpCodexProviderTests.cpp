@@ -188,7 +188,7 @@ namespace UnrealMcpCodexProviderTestsHelpers
 {
 	bool WriteFakeCodexScript(FString& OutScriptPath, FString& OutArgvFile, FString& OutStdinFile, FString& OutError)
 	{
-		const FString TempDir = FPaths::Combine(FPaths::ProjectIntermediateDir(), TEXT("UnrealMcpTests"));
+		const FString TempDir = FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectIntermediateDir(), TEXT("UnrealMcpTests")));
 		IFileManager::Get().MakeDirectory(*TempDir, true);
 
 		const FString Guid = FGuid::NewGuid().ToString(EGuidFormats::DigitsLower);
@@ -323,6 +323,8 @@ bool FUnrealMcpCodexProviderExecCommandActualBashExecTest::RunTest(const FString
 
 	FString ScriptPath, ArgvFile, StdinFile, WriteErr;
 	if (!WriteFakeCodexScript(ScriptPath, ArgvFile, StdinFile, WriteErr)) { AddError(WriteErr); return false; }
+	TestTrue(TEXT("fake codex script exists"), FPaths::FileExists(ScriptPath));
+	TestTrue(TEXT("fake codex script is non-empty"), IFileManager::Get().FileSize(*ScriptPath) > 0);
 	ON_SCOPE_EXIT
 	{
 		IFileManager::Get().Delete(*ScriptPath, false, true, true);
@@ -344,6 +346,15 @@ bool FUnrealMcpCodexProviderExecCommandActualBashExecTest::RunTest(const FString
 	if (!RunBashCMinusCWithStdin(Args, Context, Stdout, Stderr, ExitCode, RunErr))
 	{
 		AddError(FString::Printf(TEXT("bash -c failed: %s. Stderr: %s"), *RunErr, *Stderr));
+		return false;
+	}
+	if (ExitCode != 0)
+	{
+		AddError(FString::Printf(
+			TEXT("bash -c exit code %d (expected 0). Stderr: %s. Args prefix: %s"),
+			ExitCode,
+			*Stderr,
+			*Args.Left(500)));
 		return false;
 	}
 	TestEqual(TEXT("bash -c exit code 0"), ExitCode, 0);
