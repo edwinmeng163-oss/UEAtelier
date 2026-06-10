@@ -70,10 +70,10 @@ bool FUnrealMcpCallToolPolicyMatrixTest::RunTest(const FString& Parameters)
 		}
 	}
 
-	TestEqual(TEXT("visible tool count"), VisibleCount, 169);
-	TestEqual(TEXT("force dry run count"), ForceDryRunCount, 26);
+	TestEqual(TEXT("visible tool count"), VisibleCount, 178);
+	TestEqual(TEXT("force dry run count"), ForceDryRunCount, 31);
 	TestEqual(TEXT("deny count"), DenyCount, 82);
-	TestEqual(TEXT("allow count"), AllowCount, 61);
+	TestEqual(TEXT("allow count"), AllowCount, 65);
 
 	auto ExpectDecision = [this](
 		const TCHAR* ToolName,

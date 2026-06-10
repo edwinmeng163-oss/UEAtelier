@@ -22,6 +22,7 @@ namespace UnrealMcpGateDRagHitTest
 
 	void GateDConfigureRefreshArgs(FJsonObject& Args)
 	{
+		Args.SetStringField(TEXT("sourceRoot"), FPaths::GetPath(GateDGetKnowledgeSourcePath()));
 		Args.SetBoolField(TEXT("includeOfficialDocs"), true);
 		Args.SetBoolField(TEXT("includeVersionedDocs"), false);
 		Args.SetBoolField(TEXT("includeToolRegistry"), false);
