@@ -25,11 +25,12 @@ python3 Tools/verify_package_integrity.py --root <staged-package-root> --mode so
 python3 Tools/verify_package_integrity.py --zip <package.zip> --mode source --strict --repo-root .
 ```
 
-Use `--mode full-win` for the Windows full-experience package. The verifier
+Use `--mode source` for the current v0.32.2 macOS and Windows source-only
+projectroot packages. The verifier
 checks registry/schema mirror equality, package-only generated path exclusions,
-install and first-launch docs, full Windows binaries/runtime files, and the
-Windows git-symlink-stub failure mode that can turn schema aliases into tiny
-path files instead of real JSON. See [PackagingIntegrity.md](PackagingIntegrity.md)
+install and first-launch docs, and the Windows git-symlink-stub failure mode
+that can turn schema aliases into tiny path files instead of real JSON. See
+[PackagingIntegrity.md](PackagingIntegrity.md)
 for the full invariant catalog and exit-code contract.
 
 ## Required Project Plugins
@@ -71,7 +72,7 @@ Common Windows build failures:
 
 ## Build On macOS
 
-Use the UE 5.7 Mac Build script:
+Use the UE 5.6 or 5.7 Mac Build script that matches the project's `EngineAssociation`:
 
 ```bash
 "/Users/Shared/Epic Games/UE_5.7/Engine/Build/BatchFiles/Mac/Build.sh" UEvolveEditor Mac Development -Project="/path/to/UEvolve.uproject" -WaitMutex

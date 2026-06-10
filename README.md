@@ -21,7 +21,7 @@ This repository is an Unreal Engine 5.6 / 5.7 editor-tooling workbench focused o
 
 Its main deliverable is the **Unreal MCP** editor plugin under `Plugins/UnrealMcp`. The plugin exposes Unreal Editor operations through a localhost MCP endpoint and an in-editor chat panel. The repository root includes `UEvolve.uproject` (UE 5.6) as the default local development host. Two optional sample-content hosts ship alongside it: `Examples/UEvolveExample/UEvolveExample.uproject` for UE 5.6.1 and `Examples/UEvolveExample57/UEvolveExample57.uproject` for UE 5.7.4 — open the one that matches the engine you have installed.
 
-> 📘 **New here?** Start with [`Docs/Release-2026-06.md`](Docs/Release-2026-06.md) — trilingual (中文 · English · 日本語) release notes plus a step-by-step setup guide for macOS, Linux, and Windows, including the multi-provider AI configuration (OpenAI / Kimi / GLM / DeepSeek / Anthropic Claude / Codex) and the Codex Desktop bridge.
+> 📘 **New here?** Start with [`Docs/Release-2026-06c.md`](Docs/Release-2026-06c.md) — trilingual v0.32.2 notes plus the setup pointer chain for macOS, Linux, and Windows, including the multi-provider AI configuration (OpenAI / Kimi / GLM / DeepSeek / Qwen / Ollama / Anthropic Claude / Codex) and the Codex Desktop bridge.
 
 ## English Overview
 
@@ -32,13 +32,14 @@ UEAtelier productizes the act of adding new MCP capabilities under safety rails:
 audit, dry run, backup manifest, UBT compile, fixture suite, rollback, project
 memory, and supervisor recovery.
 
-Latest release: **[v0.29.0 — Core Code Tools: safe code-file read/search/preview/apply/rollback, and tool registry](https://github.com/edwinmeng163-oss/UEAtelier/releases/tag/v0.29.0)** (public, source-only projectroot zips, ~0.8 MiB each). Mac and Windows zips are both attached; the same source compiles cleanly on UE 5.6 and UE 5.7. Extract the projectroot zip next to your `<YourProject>.uproject` (NOT under `Plugins/`); UBT compiles on first editor launch or explicit editor-target build.
+Latest release: **[v0.32.2 — MCP protocol conformance fix + wire-shape guardrails](https://github.com/edwinmeng163-oss/UEAtelier/releases/tag/v0.32.2)** (public, source-only projectroot zips, ~1 MiB each). Mac and Windows zips are both attached; the same source compiles cleanly on UE 5.6 and UE 5.7. Extract the projectroot zip next to your `<YourProject>.uproject` (NOT under `Plugins/`); UBT compiles on first editor launch or explicit editor-target build.
 
 Current core capabilities:
 
 - Local MCP server inside Unreal Editor, plus `Window > UEAtelier Chat`.
 - `Window > UEAtelier Workbench` aggregates status, audit, core tests, pipeline, and lock state.
 - Task Atlas in Chat extracts local workflows from ActivityLog, supports task list/detail/rating/pinning, and promotes selected workflows to skill drafts or local RAG sources.
+- v0.30-v0.32.2 add Task Atlas Make Tool Set, CLI↔Chat sync tools (`unreal.chat_inject_user_input`, `unreal.chat_history_tail`, `unreal.chat_tool_log_tail`), Windows-capable Codex CLI provider, and strict-client MCP conformance pinned by spec-exact protocol response automation plus an official-SDK release gate.
 - 190 registered MCP tools across actors, blueprint, code, editor, material, memory, scaffold, self-extension, skills, task-atlas, verification, and widget categories.
 - v0.28 fills the core Blueprint authoring layer: legacy input-event nodes, Blueprint SCS component add/property set, class defaults, current-map GameMode override, actor auto-possess, and curated gameplay graph nodes.
 - AI can now build a playable third-person character end-to-end using visible core `unreal.*` tools only, with no `execute_python`; dogfood verification measured ~126 cm of forward movement through `unreal.pie_input_probe`.
@@ -50,7 +51,7 @@ Current core capabilities:
 - Local RAG with a Knowledge index and Knowledge cards under `Saved/UnrealMcp/KnowledgeIndex/`.
 - Multi-engine and cross-platform discipline for UE 5.6.1 and UE 5.7.4 on macOS and Windows.
 
-For a quick start, read `Docs/Release-2026-06.md`, then `AGENTS.md`, then the
+For a quick start, read `Docs/Release-2026-06c.md`, then `AGENTS.md`, then the
 Deployment section later in this README.
 
 Demo gallery: see [Demo/README.md](Demo/README.md).
@@ -71,13 +72,14 @@ UEAtelier 试图把“新增 MCP 能力”本身产品化，并用安全护栏�
 audit、dry run、备份 manifest、UBT 编译、fixture 测试套件、rollback、
 project memory 和 supervisor 恢复链路。
 
-最新 release：**[v0.29.0 — 核心代码工具：安全的代码文件读取/搜索/预览/应用/回滚和工具注册表](https://github.com/edwinmeng163-oss/UEAtelier/releases/tag/v0.29.0)**（公开、source-only projectroot zip、各约 0.8 MiB）。Mac 和 Windows zip 都已上传；同一份 source 在 UE 5.6 和 UE 5.7 上都能干净编译。把 projectroot zip 解压到 `<YourProject>.uproject` 同级目录（不要解到 `Plugins/` 下），UBT 会在首次启动编辑器或显式构建 editor target 时编译插件。
+最新 release：**[v0.32.2 — MCP protocol conformance fix + wire-shape guardrails](https://github.com/edwinmeng163-oss/UEAtelier/releases/tag/v0.32.2)**（公开、source-only projectroot zip、各约 1 MiB）。Mac 和 Windows zip 都已上传；同一份 source 在 UE 5.6 和 UE 5.7 上都能干净编译。把 projectroot zip 解压到 `<YourProject>.uproject` 同级目录（不要解到 `Plugins/` 下），UBT 会在首次启动编辑器或显式构建 editor target 时编译插件。
 
 当前核心能力：
 
 - 在 Unreal Editor 内运行本地 MCP server，并提供 `Window > UEAtelier Chat` 对话入口。
 - `Window > UEAtelier Workbench` 聚合 status、audit、core tests、pipeline 和 lock 状态。
 - Chat 内的 Task Atlas 会从 ActivityLog 提取本地 workflows，并支持 task list/detail/rating/pinning，还能把选中的 workflow 提升为 skill draft 或 local RAG source。
+- v0.30-v0.32.2 新增 Task Atlas Make Tool Set、CLI↔Chat 同步工具（`unreal.chat_inject_user_input`、`unreal.chat_history_tail`、`unreal.chat_tool_log_tail`），让 Codex CLI provider 支持 Windows，并用 spec-exact protocol response 自动化测试和 official-SDK release gate 固化 strict-client MCP conformance。
 - 已注册 190 个 MCP tools，覆盖 actors、blueprint、code、editor、material、memory、scaffold、self-extension、skills、task-atlas、verification、widget 分类。
 - v0.28 补齐核心蓝图创作层：legacy 输入事件节点、蓝图 SCS 组件新增/属性设置、类默认值、当前地图 GameMode override、actor auto-possess，以及枚举式 gameplay 图节点。
 - AI 现在可以只用可见核心 `unreal.*` 工具端到端造出可玩的第三人称角色，不需要 `execute_python`；dogfood 验证通过 `unreal.pie_input_probe` 量得前进约 126 cm。
@@ -89,7 +91,7 @@ project memory 和 supervisor 恢复链路。
 - 本地 RAG：Knowledge index 和 Knowledge cards 位于 `Saved/UnrealMcp/KnowledgeIndex/`。
 - 面向 UE 5.6.1 与 UE 5.7.4、macOS 与 Windows 的多引擎和跨平台兼容纪律。
 
-快速开始请先阅读 `Docs/Release-2026-06.md`，再读 `AGENTS.md`，然后参考本
+快速开始请先阅读 `Docs/Release-2026-06c.md`，再读 `AGENTS.md`，然后参考本
 README 后面的 Deployment 部分。
 
 Demo 库：见 [Demo/README.md](Demo/README.md)。
@@ -110,13 +112,14 @@ UEAtelier は新しい MCP capabilities を追加する行為そのものを製�
 audit、dry run、backup manifest、UBT compile、fixture suite、rollback、
 project memory、supervisor recovery という安全レールの下で扱います。
 
-最新リリース: **[v0.29.0 — コアコードツール：安全なコードファイル read/search/preview/apply/rollback、tool registry](https://github.com/edwinmeng163-oss/UEAtelier/releases/tag/v0.29.0)**（公開、source-only projectroot zip、各約 0.8 MiB）。Mac と Windows の zip が両方添付されており、同一ソースで UE 5.6 と UE 5.7 の両方が clean にコンパイルできます。projectroot zip を `<YourProject>.uproject` と同じ階層に展開してください（`Plugins/` 配下には展開しません）。UBT が初回エディタ起動時、または editor target の明示的なビルド時に plugin をコンパイルします。
+最新リリース: **[v0.32.2 — MCP protocol conformance fix + wire-shape guardrails](https://github.com/edwinmeng163-oss/UEAtelier/releases/tag/v0.32.2)**（公開、source-only projectroot zip、各約 1 MiB）。Mac と Windows の zip が両方添付されており、同一ソースで UE 5.6 と UE 5.7 の両方が clean にコンパイルできます。projectroot zip を `<YourProject>.uproject` と同じ階層に展開してください（`Plugins/` 配下には展開しません）。UBT が初回エディタ起動時、または editor target の明示的なビルド時に plugin をコンパイルします。
 
 現在の中核機能:
 
 - Unreal Editor 内で local MCP server を動かし、`Window > UEAtelier Chat` を提供します。
 - `Window > UEAtelier Workbench` が status、audit、core tests、pipeline、lock state を集約します。
 - Chat 内の Task Atlas が ActivityLog から local workflows を抽出し、task list/detail/rating/pinning に加えて、選択した workflow の skill draft 化と local RAG source 化を扱います。
+- v0.30-v0.32.2 では Task Atlas Make Tool Set、CLI↔Chat sync tools（`unreal.chat_inject_user_input`、`unreal.chat_history_tail`、`unreal.chat_tool_log_tail`）、Windows 対応の Codex CLI provider を追加し、spec-exact protocol response の automation tests と official-SDK release gate で strict-client MCP conformance を固定しました。
 - actors、blueprint、code、editor、material、memory、scaffold、self-extension、skills、task-atlas、verification、widget カテゴリにまたがる 190 個の MCP tools を登録済みです。
 - v0.28 は core Blueprint authoring layer を補完します：legacy input-event node、Blueprint SCS component の追加/property 設定、class default、現在マップの GameMode override、actor auto-possess、curated gameplay graph node に対応します。
 - AI は visible core `unreal.*` tool だけで playable な third-person character を end-to-end で構築でき、`execute_python` は不要です。dogfood verification では `unreal.pie_input_probe` が約 126 cm の前進を計測しました。
@@ -128,7 +131,7 @@ project memory、supervisor recovery という安全レールの下で扱いま�
 - `Saved/UnrealMcp/KnowledgeIndex/` 配下の Knowledge index と Knowledge cards による local RAG を備えています。
 - UE 5.6.1 と UE 5.7.4、macOS と Windows に向けた multi-engine / cross-platform 互換性の規律を保ちます。
 
-quick start には `Docs/Release-2026-06.md`、続いて `AGENTS.md`、さらにこの
+quick start には `Docs/Release-2026-06c.md`、続いて `AGENTS.md`、さらにこの
 README 後半の Deployment section を参照してください。
 
 デモギャラリー：[Demo/README.md](Demo/README.md) を参照。
@@ -140,7 +143,7 @@ The repository currently contains:
 
 - `UEvolve.uproject`, the root Unreal Engine 5.6 local development host for the workbench, forward-compatible with UE 5.7.
 - `open_uevolve.command`, a macOS convenience launcher that opens the root host project.
-- `Plugins/UnrealMcp`, an editor plugin for local MCP and in-editor AI/chat workflows (`VersionName: 0.32.1`).
+- `Plugins/UnrealMcp`, an editor plugin for local MCP and in-editor AI/chat workflows (`VersionName: 0.32.2`).
 - `Examples/UEvolveExample` (UE 5.6.1) and `Examples/UEvolveExample57` (UE 5.7.4), two optional C++ example projects used to validate the plugin with sample content — open whichever matches the engine you have installed.
 - Git LFS setup for Unreal binary assets.
 - Project-level README and ignore rules suitable for public GitHub hosting.
@@ -238,6 +241,14 @@ Run the smoke client:
 ```bash
 bun run --cwd Tools/UnrealMcpCodexBridge test-client.ts
 ```
+
+Run the SDK conformance smoke against a running editor after one-time dependency install (`bun install --cwd Tools/UnrealMcpCodexBridge`):
+
+```bash
+bun run --cwd Tools/UnrealMcpCodexBridge test-sdk-conformance.ts
+```
+
+The tested-client matrix in `Tools/UnrealMcpCodexBridge/README.md` covers codex-cli 0.130.0 / 0.132.0 plus rmcp 0.15; Codex Desktop auto-updates the CLI.
 
 The default bridge approval policy is `reject`: Codex command execution, file
 changes, permission escalation, MCP elicitation, and user-input requests are not
@@ -654,7 +665,7 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
 Requirements:
 
-- Unreal Engine 5.7.
+- Unreal Engine 5.6 or 5.7.
 - Git LFS.
 - macOS is the most tested development path for this repository.
 
@@ -729,7 +740,7 @@ The root `Config/` folder is committed as a safe template. It disables Android F
 
 Install:
 
-- Unreal Engine 5.7.
+- Unreal Engine 5.6 or 5.7.
 - Xcode command line tools on macOS.
 - Visual Studio 2022 with C++ tools on Windows.
 - Git.
@@ -800,7 +811,7 @@ mkdir -p "/path/to/YourProject/Plugins"
 ln -s "$(pwd)/Plugins/UnrealMcp" "/path/to/YourProject/Plugins/UnrealMcp"
 ```
 
-Open your own `.uproject` in Unreal Engine 5.7, allow the rebuild prompt, and confirm the plugin is enabled under:
+Open your own `.uproject` in Unreal Engine 5.6 or 5.7 (matching its `EngineAssociation`), allow the rebuild prompt, and confirm the plugin is enabled under:
 
 ```text
 Edit > Plugins > Unreal MCP
@@ -839,7 +850,7 @@ Project-level install is the recommended path. Do not keep a second copy under t
 
 ### 4. Open Or Build The Local Development Host
 
-Open `UEvolve.uproject` directly in Unreal Engine 5.7 for local workbench development. On macOS, `./open_uevolve.command` opens the same root project.
+Open `UEvolve.uproject` directly for local workbench development; the root host defaults to UE 5.6 and is forward-compatible with UE 5.7. On macOS, `./open_uevolve.command` opens the same root project.
 
 Before command-line builds, close all running Unreal Editor instances for this project and disable Live Coding. Unreal Build Tool can fail with `Unable to build while Live Coding is active` if the editor still has Live Coding enabled or loaded.
 
@@ -863,7 +874,7 @@ Windows is supported as a source-build target, but it has a few extra setup requ
 Recommended Windows environment:
 
 - Windows 10 or Windows 11 64-bit.
-- Unreal Engine 5.7 installed through Epic Games Launcher or from source.
+- Unreal Engine 5.6 or 5.7 installed through Epic Games Launcher or from source.
 - Visual Studio 2022.
 - Visual Studio workload: `Desktop development with C++`.
 - MSVC v143 toolchain.
@@ -953,7 +964,7 @@ E:\UE5_P\EasyMapper5_7\Plugins\UnrealMcp\Binaries\Win64\UnrealEditor.modules
 Windows-specific issues to expect:
 
 - Engine-level duplicate plugin: remove `Engine\Plugins\Marketplace\UnrealMcp` when using project-level install, and close Unreal Editor first if Windows says the DLL is locked.
-- Engine version mismatch: install Unreal Engine 5.7 or update `EngineAssociation` intentionally.
+- Engine version mismatch: install Unreal Engine 5.6 or 5.7 matching your project's `EngineAssociation`, or update `EngineAssociation` intentionally.
 - Live Coding lock: close Unreal Editor and disable Live Coding before command-line builds.
 - Missing C++ compiler: install Visual Studio 2022 and the C++ desktop workload.
 - Missing Windows SDK: add it through Visual Studio Installer.
