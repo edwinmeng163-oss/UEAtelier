@@ -18,7 +18,6 @@
 #include "UnrealMcpSettings.h"
 #include "UnrealMcpToolHandlerRegistry.h"
 #include "UnrealMcpToolRegistry.h"
-#include "UnrealMcpUserToolListVersion.h"
 #include "UnrealMcpUserToolRegistry.h"
 
 namespace UnrealMcp
@@ -319,9 +318,6 @@ TUniquePtr<FHttpServerResponse> FUnrealMcpModule::HandleToolsList(const TSharedP
 
 	TSharedPtr<FJsonObject> ResultObject = MakeShared<FJsonObject>();
 	ResultObject->SetArrayField(TEXT("tools"), ToolsArray);
-	TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
-	StructuredContent->SetNumberField(TEXT("toolsListVersion"), static_cast<double>(UnrealMcp::GetUserToolListVersion()));
-	ResultObject->SetObjectField(TEXT("structuredContent"), StructuredContent);
 
 	return MakeJsonRpcResult(Id, ResultObject);
 }
