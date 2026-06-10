@@ -16,7 +16,7 @@ Current plugin metadata:
 ```text
 Plugins/UnrealMcp/UnrealMcp.uplugin
 FriendlyName: UEAtelier
-VersionName: 0.31.0
+VersionName: 0.32.1
 EngineVersion: 5.6.0
 Type: Editor plugin
 Required plugin: PythonScriptPlugin
@@ -186,7 +186,23 @@ CLI <-> Chat Panel sync tools (chat_inject_user_input, chat_history_tail,
 chat_tool_log_tail) and hardens Task Atlas eligibility against external-client
 registry-miss noise.
 
-Current project status: v0.32.0 (2026-06-02) is the stable release after a
+Current project status: v0.32.1 (2026-06-10) is a platform-coverage patch
+on v0.32.0. The Codex CLI subprocess provider now works on Windows: direct
+codex.exe spawn with no shell intermediary, MSVC CRT-quoted argv (UE
+auto-quotes the URL so the builder excludes the binary path), .exe-only
+binary validation rejecting npm .cmd/.bat shims and WindowsApps store paths,
+a 30000-TCHAR full-command-line guard, and the three ChatPanel Windows UI
+gates removed; the POSIX path is byte-identical (stash-contrast verified).
+The release also ships a dev-host automation baseline cleanup (committed
+tool.json manifest for user.editor_python_runtime_info, GateD sourceRoot
+fixture isolation, ExecCommandActualBashExec relative-path root-cause fix,
+stale count expectations refreshed, CountSeparation made baseline-relative).
+Tool count stays 190; UE 5.6 + 5.7 dual-engine builds pass and full
+automation on both dev and example hosts converges to the two known
+failures (RunRecoversStale, PieSmoke.MapValidation). Trilingual notes at
+`Docs/Release-2026-06b.md`.
+
+Earlier project status: v0.32.0 (2026-06-02) was the stable release after a
 9-chunk rework of Task Atlas Make Tool Set + CLI ↔ editor chat sync. The
 rework added 9 new MCP tools (6 task_atlas_* wrappers in chunk 5 +
 chat_inject_user_input/chat_history_tail/chat_tool_log_tail in chunk 9),
