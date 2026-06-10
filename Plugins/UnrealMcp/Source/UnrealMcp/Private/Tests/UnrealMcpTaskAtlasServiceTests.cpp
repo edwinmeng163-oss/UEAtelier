@@ -1832,11 +1832,11 @@ bool FUnrealMcpTaskAtlasMcpE2ECrossWrapperCycleTest::RunTest(const FString& Para
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-	FUnrealMcpUserToolListVersionToolsListIncludesVersionTest,
-	"UnrealMcp.UserToolListVersion.ToolsListIncludesVersion",
+	FUnrealMcpUserToolListVersionToolsListOmitsVersionTest,
+	"UnrealMcp.UserToolListVersion.ToolsListOmitsVersion",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-bool FUnrealMcpUserToolListVersionToolsListIncludesVersionTest::RunTest(const FString& Parameters)
+bool FUnrealMcpUserToolListVersionToolsListOmitsVersionTest::RunTest(const FString& Parameters)
 {
 	(void)Parameters;
 
@@ -1875,17 +1875,8 @@ bool FUnrealMcpUserToolListVersionToolsListIncludesVersionTest::RunTest(const FS
 
 	const TArray<TSharedPtr<FJsonValue>>* Tools = nullptr;
 	TestTrue(TEXT("tools array exists"), (*ResultObject)->TryGetArrayField(TEXT("tools"), Tools) && Tools && Tools->Num() > 0);
-	const TSharedPtr<FJsonObject>* StructuredContent = nullptr;
-	TestTrue(TEXT("structuredContent exists"), (*ResultObject)->TryGetObjectField(TEXT("structuredContent"), StructuredContent) && StructuredContent && (*StructuredContent).IsValid());
-	if (!StructuredContent || !(*StructuredContent).IsValid())
-	{
-		return false;
-	}
-
-	double Version = 0.0;
-	TestTrue(TEXT("toolsListVersion is number"), (*StructuredContent)->TryGetNumberField(TEXT("toolsListVersion"), Version));
-	TestTrue(TEXT("toolsListVersion non-zero"), Version >= 1.0);
-	TestEqual(TEXT("toolsListVersion matches global"), static_cast<uint64>(Version), UnrealMcp::GetUserToolListVersion());
+	TestFalse(TEXT("structuredContent omitted"), (*ResultObject)->HasField(TEXT("structuredContent")));
+	TestFalse(TEXT("toolsListVersion omitted"), (*ResultObject)->HasField(TEXT("toolsListVersion")));
 	return true;
 }
 

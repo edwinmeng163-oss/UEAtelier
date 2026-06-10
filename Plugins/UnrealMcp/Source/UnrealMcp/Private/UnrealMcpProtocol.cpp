@@ -15,6 +15,7 @@
 #include "Templates/Atomic.h"
 #include "UnrealMcpActivityLog.h"
 #include "UnrealMcpCaptureRedaction.h"
+#include "UnrealMcpProtocolBuilders.h"
 #include "UnrealMcpSettings.h"
 #include "UnrealMcpToolHandlerRegistry.h"
 #include "UnrealMcpToolRegistry.h"
@@ -36,6 +37,100 @@ namespace UnrealMcp
 	TSharedPtr<FJsonObject> MakeEmptyObject();
 	TArray<TSharedPtr<FJsonValue>> MakeJsonStringArray(const TArray<FString>& Values);
 	bool TryGetMethodAndId(const FHttpServerRequest& Request, FString& OutMethod, TSharedPtr<FJsonValue>& OutId);
+
+	namespace Protocol
+	{
+		const FString& GetLatestProtocolVersion()
+		{
+			return ProtocolLatestVersion;
+		}
+
+		FString NegotiateProtocolVersion(const FString& RequestedProtocolVersion)
+		{
+			if (!RequestedProtocolVersion.IsEmpty() && IsSupportedProtocolVersion(RequestedProtocolVersion))
+			{
+				return RequestedProtocolVersion;
+			}
+
+			return ProtocolLatestVersion;
+		}
+
+		TSharedPtr<FJsonObject> BuildInitializeResult(const FString& RequestedProtocolVersion, const FString& EndpointUrl)
+		{
+			const FString NegotiatedProtocolVersion = NegotiateProtocolVersion(RequestedProtocolVersion);
+
+			TSharedPtr<FJsonObject> CapabilitiesObject = MakeShared<FJsonObject>();
+			TSharedPtr<FJsonObject> ToolsCapabilities = MakeShared<FJsonObject>();
+			ToolsCapabilities->SetBoolField(TEXT("listChanged"), false);
+			CapabilitiesObject->SetObjectField(TEXT("tools"), ToolsCapabilities);
+
+			TSharedPtr<FJsonObject> ServerInfoObject = MakeShared<FJsonObject>();
+			ServerInfoObject->SetStringField(TEXT("name"), TEXT("unreal-editor-mcp"));
+			ServerInfoObject->SetStringField(TEXT("version"), TEXT("0.10.4"));
+
+			TSharedPtr<FJsonObject> ResultObject = MakeShared<FJsonObject>();
+			ResultObject->SetStringField(TEXT("protocolVersion"), NegotiatedProtocolVersion);
+			ResultObject->SetObjectField(TEXT("capabilities"), CapabilitiesObject);
+			ResultObject->SetObjectField(TEXT("serverInfo"), ServerInfoObject);
+			ResultObject->SetStringField(
+				TEXT("instructions"),
+				FString::Printf(
+					TEXT("Connected to Unreal Editor. This server can inspect assets, drive PIE sessions, tail logs, run console commands, batch-edit actor properties, lay out and spawn actors in bulk (grid and circle), execute Python commands or script files, open maps and assets, create/compile blueprints, edit Blueprint graphs with bp_* tools, edit UMG Widget Blueprints with widget_* tools, scaffold MCP tool extensions with scaffold_mcp_tool and mcp_* pipeline tools, and save dirty packages. Inside the editor you can also open Window > Unreal MCP Chat. Endpoint: %s"),
+					*EndpointUrl));
+			return ResultObject;
+		}
+
+		TSharedPtr<FJsonObject> BuildPingResult()
+		{
+			return MakeEmptyObject();
+		}
+
+		TSharedPtr<FJsonObject> BuildToolsListResult(const TArray<TSharedPtr<FJsonValue>>& ToolsArray)
+		{
+			TSharedPtr<FJsonObject> ResultObject = MakeShared<FJsonObject>();
+			ResultObject->SetArrayField(TEXT("tools"), ToolsArray);
+			return ResultObject;
+		}
+
+		TSharedPtr<FJsonObject> BuildToolCallResult(const FString& Text, const TSharedPtr<FJsonObject>& StructuredContent, bool bIsError)
+		{
+			TArray<TSharedPtr<FJsonValue>> ContentArray;
+			ContentArray.Add(MakeShared<FJsonValueObject>(MakeTextContentObject(Text)));
+
+			TSharedPtr<FJsonObject> ResultObject = MakeShared<FJsonObject>();
+			ResultObject->SetArrayField(TEXT("content"), ContentArray);
+			ResultObject->SetBoolField(TEXT("isError"), bIsError);
+
+			if (StructuredContent.IsValid())
+			{
+				ResultObject->SetObjectField(TEXT("structuredContent"), StructuredContent);
+			}
+
+			return ResultObject;
+		}
+
+		TSharedPtr<FJsonObject> BuildJsonRpcResultEnvelope(const TSharedPtr<FJsonValue>& Id, const TSharedPtr<FJsonObject>& Result)
+		{
+			TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+			Payload->SetStringField(TEXT("jsonrpc"), TEXT("2.0"));
+			Payload->SetField(TEXT("id"), Id);
+			Payload->SetObjectField(TEXT("result"), Result);
+			return Payload;
+		}
+
+		TSharedPtr<FJsonObject> BuildJsonRpcErrorEnvelope(const TSharedPtr<FJsonValue>& Id, int32 ErrorCode, const FString& ErrorMessage)
+		{
+			TSharedPtr<FJsonObject> ErrorObject = MakeShared<FJsonObject>();
+			ErrorObject->SetNumberField(TEXT("code"), ErrorCode);
+			ErrorObject->SetStringField(TEXT("message"), ErrorMessage);
+
+			TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+			Payload->SetStringField(TEXT("jsonrpc"), TEXT("2.0"));
+			Payload->SetField(TEXT("id"), Id ? Id : MakeShared<FJsonValueNull>());
+			Payload->SetObjectField(TEXT("error"), ErrorObject);
+			return Payload;
+		}
+	}
 }
 
 bool FUnrealMcpModule::StartServer()
@@ -275,40 +370,17 @@ TUniquePtr<FHttpServerResponse> FUnrealMcpModule::HandleInitialize(const TShared
 	FString RequestedProtocolVersion;
 	Params.TryGetStringField(TEXT("protocolVersion"), RequestedProtocolVersion);
 
-	FString NegotiatedProtocolVersion = UnrealMcp::ProtocolLatestVersion;
-	if (!RequestedProtocolVersion.IsEmpty() && UnrealMcp::IsSupportedProtocolVersion(RequestedProtocolVersion))
-	{
-		NegotiatedProtocolVersion = RequestedProtocolVersion;
-	}
-
-	TSharedPtr<FJsonObject> CapabilitiesObject = MakeShared<FJsonObject>();
-	TSharedPtr<FJsonObject> ToolsCapabilities = MakeShared<FJsonObject>();
-	ToolsCapabilities->SetBoolField(TEXT("listChanged"), false);
-	CapabilitiesObject->SetObjectField(TEXT("tools"), ToolsCapabilities);
-
-	TSharedPtr<FJsonObject> ServerInfoObject = MakeShared<FJsonObject>();
-	ServerInfoObject->SetStringField(TEXT("name"), TEXT("unreal-editor-mcp"));
-		ServerInfoObject->SetStringField(TEXT("version"), TEXT("0.10.4"));
-
 	const UUnrealMcpSettings* Settings = GetDefault<UUnrealMcpSettings>();
 	const FString EndpointUrl = FString::Printf(TEXT("http://127.0.0.1:%d%s"), Settings->Port, *UnrealMcp::NormalizeEndpointPath(Settings->EndpointPath));
-
-	TSharedPtr<FJsonObject> ResultObject = MakeShared<FJsonObject>();
-	ResultObject->SetStringField(TEXT("protocolVersion"), NegotiatedProtocolVersion);
-	ResultObject->SetObjectField(TEXT("capabilities"), CapabilitiesObject);
-		ResultObject->SetObjectField(TEXT("serverInfo"), ServerInfoObject);
-			ResultObject->SetStringField(
-				TEXT("instructions"),
-				FString::Printf(
-				TEXT("Connected to Unreal Editor. This server can inspect assets, drive PIE sessions, tail logs, run console commands, batch-edit actor properties, lay out and spawn actors in bulk (grid and circle), execute Python commands or script files, open maps and assets, create/compile blueprints, edit Blueprint graphs with bp_* tools, edit UMG Widget Blueprints with widget_* tools, scaffold MCP tool extensions with scaffold_mcp_tool and mcp_* pipeline tools, and save dirty packages. Inside the editor you can also open Window > Unreal MCP Chat. Endpoint: %s"),
-					*EndpointUrl));
+	const FString NegotiatedProtocolVersion = UnrealMcp::Protocol::NegotiateProtocolVersion(RequestedProtocolVersion);
+	const TSharedPtr<FJsonObject> ResultObject = UnrealMcp::Protocol::BuildInitializeResult(RequestedProtocolVersion, EndpointUrl);
 
 	return MakeJsonRpcResult(Id, ResultObject, NegotiatedProtocolVersion);
 }
 
 TUniquePtr<FHttpServerResponse> FUnrealMcpModule::HandlePing(const TSharedPtr<FJsonValue>& Id)
 {
-	return MakeJsonRpcResult(Id, UnrealMcp::MakeEmptyObject());
+	return MakeJsonRpcResult(Id, UnrealMcp::Protocol::BuildPingResult());
 }
 
 TUniquePtr<FHttpServerResponse> FUnrealMcpModule::HandleToolsList(const TSharedPtr<FJsonValue>& Id)
@@ -316,10 +388,7 @@ TUniquePtr<FHttpServerResponse> FUnrealMcpModule::HandleToolsList(const TSharedP
 	TArray<TSharedPtr<FJsonValue>> ToolsArray;
 	AppendToolDefinitions(ToolsArray);
 
-	TSharedPtr<FJsonObject> ResultObject = MakeShared<FJsonObject>();
-	ResultObject->SetArrayField(TEXT("tools"), ToolsArray);
-
-	return MakeJsonRpcResult(Id, ResultObject);
+	return MakeJsonRpcResult(Id, UnrealMcp::Protocol::BuildToolsListResult(ToolsArray));
 }
 
 TUniquePtr<FHttpServerResponse> FUnrealMcpModule::HandleToolsCall(const TSharedPtr<FJsonValue>& Id, const FJsonObject& Params)
@@ -408,41 +477,17 @@ TUniquePtr<FHttpServerResponse> FUnrealMcpModule::MakeJsonResponse(const TShared
 
 TUniquePtr<FHttpServerResponse> FUnrealMcpModule::MakeJsonRpcResult(const TSharedPtr<FJsonValue>& Id, const TSharedPtr<FJsonObject>& Result, const FString& ProtocolVersion) const
 {
-	TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
-	Payload->SetStringField(TEXT("jsonrpc"), TEXT("2.0"));
-	Payload->SetField(TEXT("id"), Id);
-	Payload->SetObjectField(TEXT("result"), Result);
-	return MakeJsonResponse(Payload, EHttpServerResponseCodes::Ok, ProtocolVersion);
+	return MakeJsonResponse(UnrealMcp::Protocol::BuildJsonRpcResultEnvelope(Id, Result), EHttpServerResponseCodes::Ok, ProtocolVersion);
 }
 
 TUniquePtr<FHttpServerResponse> FUnrealMcpModule::MakeJsonRpcError(const TSharedPtr<FJsonValue>& Id, int32 ErrorCode, const FString& ErrorMessage, EHttpServerResponseCodes ResponseCode, const FString& ProtocolVersion) const
 {
-	TSharedPtr<FJsonObject> ErrorObject = MakeShared<FJsonObject>();
-	ErrorObject->SetNumberField(TEXT("code"), ErrorCode);
-	ErrorObject->SetStringField(TEXT("message"), ErrorMessage);
-
-	TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
-	Payload->SetStringField(TEXT("jsonrpc"), TEXT("2.0"));
-	Payload->SetField(TEXT("id"), Id ? Id : MakeShared<FJsonValueNull>());
-	Payload->SetObjectField(TEXT("error"), ErrorObject);
-	return MakeJsonResponse(Payload, ResponseCode, ProtocolVersion);
+	return MakeJsonResponse(UnrealMcp::Protocol::BuildJsonRpcErrorEnvelope(Id, ErrorCode, ErrorMessage), ResponseCode, ProtocolVersion);
 }
 
 TUniquePtr<FHttpServerResponse> FUnrealMcpModule::MakeToolResult(const TSharedPtr<FJsonValue>& Id, const FString& Text, const TSharedPtr<FJsonObject>& StructuredContent, bool bIsError) const
 {
-	TArray<TSharedPtr<FJsonValue>> ContentArray;
-	ContentArray.Add(MakeShared<FJsonValueObject>(UnrealMcp::MakeTextContentObject(Text)));
-
-	TSharedPtr<FJsonObject> ResultObject = MakeShared<FJsonObject>();
-	ResultObject->SetArrayField(TEXT("content"), ContentArray);
-	ResultObject->SetBoolField(TEXT("isError"), bIsError);
-
-	if (StructuredContent.IsValid())
-	{
-		ResultObject->SetObjectField(TEXT("structuredContent"), StructuredContent);
-	}
-
-	return MakeJsonRpcResult(Id, ResultObject);
+	return MakeJsonRpcResult(Id, UnrealMcp::Protocol::BuildToolCallResult(Text, StructuredContent, bIsError));
 }
 
 TUniquePtr<FHttpServerResponse> FUnrealMcpModule::MakeAcceptedResponse() const

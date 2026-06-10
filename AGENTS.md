@@ -292,7 +292,8 @@ python3 Tools/validate_tool_registry.py
 `UnrealMcpModule.cpp` is intentionally thin. Do not add tool logic there.
 
 ```text
-Lifecycle/protocol: UnrealMcpModule.cpp, UnrealMcpProtocol.cpp
+Lifecycle/protocol: UnrealMcpModule.cpp, UnrealMcpProtocol.cpp,
+  UnrealMcpProtocolBuilders.h
 Tool metadata: UnrealMcpToolDefinitions.cpp, UnrealMcpToolDescriptor.h,
   UnrealMcpToolRegistrar.cpp/.h, UnrealMcpToolRegistry.cpp/.h,
   UnrealMcpToolHandlerRegistry.cpp/.h, UnrealMcpToolDispatcher.cpp
