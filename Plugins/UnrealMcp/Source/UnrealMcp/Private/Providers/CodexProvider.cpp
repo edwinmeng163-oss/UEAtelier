@@ -15,11 +15,14 @@
 #include <atomic>
 
 // =====================================================================
-// CodexProvider shell-quoting invariants (v0.25 - authoritative copy
-// of Docs/AIProviderArchitecture.md Section B; keep both in sync)
+// CodexProvider subprocess invariants (authoritative copy of
+// Docs/AIProviderArchitecture.md Section B; keep both in sync)
 // =====================================================================
+//
+// POSIX bash-shell invariants (v0.25):
+//
 // The full Arguments string passed to FPlatformProcess::CreateProc as the
-// Arguments parameter, for the bash subprocess that wraps codex exec,
+// Arguments parameter, for the bash subprocess that wraps codex exec on POSIX,
 // must satisfy ALL of the following invariants:
 //
 // - The full `Arguments` string passed to `FPlatformProcess::CreateProc` has
@@ -82,6 +85,20 @@
 //     codex exec + 3 pipes + worker-thread chunked stdin write. Drops
 //     3 runtime dependencies; resolves G1 (interactive-mode mismatch)
 //     + G4 (composed prompt argv length).
+//
+// Windows direct-exe invariants (R1):
+//
+// - Windows spawns codex.exe directly. No cmd.exe or shell intermediary.
+// - UE Windows CreateProc auto-quotes URL and appends Parms as-is, so
+//   CodexBinaryPath is passed only as URL and Windows Parms excludes the
+//   binary path.
+// - CodexBinaryPath must be an unquoted absolute .exe path. .cmd/.bat shims
+//   are rejected because they require cmd.exe interpretation.
+// - WindowsApps protected namespace paths are rejected because direct
+//   CreateProcess can fail with EPERM.
+// - Each Parms argv word is quoted with MSVC CRT / CommandLineToArgvW rules.
+// - The full UE-built Windows command line is guarded at 30000 TCHAR code
+//   units before spawn.
 // =====================================================================
 
 namespace UnrealMcp::Providers
@@ -171,6 +188,117 @@ namespace UnrealMcp::Providers::Internal
 
 		return UnrealMcp::Providers::GetCodexSubprocessPathPrefix()
 			+ FString::Join(CommandParts, TEXT("${IFS}"));
+	}
+
+	FString QuoteForWindowsArgvWord(const FString& Value)
+	{
+		const bool bNeedsQuotes = Value.IsEmpty()
+			|| Value.Contains(TEXT(" "))
+			|| Value.Contains(TEXT("\t"))
+			|| Value.Contains(TEXT("\""));
+		if (!bNeedsQuotes)
+		{
+			return Value;
+		}
+
+		auto AppendBackslashes = [](FString& Target, int32 Count)
+		{
+			for (int32 Index = 0; Index < Count; ++Index)
+			{
+				Target.AppendChar(TEXT('\\'));
+			}
+		};
+
+		FString Quoted;
+		Quoted.Reserve(Value.Len() + 8);
+		Quoted.AppendChar(TEXT('"'));
+
+		int32 PendingBackslashes = 0;
+		for (const TCHAR Character : Value)
+		{
+			if (Character == TEXT('\\'))
+			{
+				++PendingBackslashes;
+				continue;
+			}
+
+			if (Character == TEXT('"'))
+			{
+				AppendBackslashes(Quoted, PendingBackslashes * 2 + 1);
+				Quoted.AppendChar(TEXT('"'));
+				PendingBackslashes = 0;
+				continue;
+			}
+
+			AppendBackslashes(Quoted, PendingBackslashes);
+			PendingBackslashes = 0;
+			Quoted.AppendChar(Character);
+		}
+
+		AppendBackslashes(Quoted, PendingBackslashes * 2);
+		Quoted.AppendChar(TEXT('"'));
+		return Quoted;
+	}
+
+	FString BuildCodexExecWindowsArguments(
+		const FString& UserPromptOnly,
+		const FString& ProjectAbsoluteDir,
+		const TArray<FString>& FilteredExtraArgs)
+	{
+		static const TCHAR* const ForcedCodexModel = TEXT("gpt-5.5");
+		static const TCHAR* const ForcedCodexReasoning = TEXT("xhigh");
+		static const TCHAR* const ForcedCodexSandbox = TEXT("workspace-write");
+
+		TArray<FString> Args;
+		Args.Add(TEXT("exec"));
+		Args.Add(TEXT("--json"));
+		Args.Add(TEXT("--ephemeral"));
+		Args.Add(TEXT("--skip-git-repo-check"));
+		Args.Add(TEXT("-C"));
+		Args.Add(ProjectAbsoluteDir);
+		Args.Add(TEXT("-c"));
+		Args.Add(FString::Printf(TEXT("model=\"%s\""), ForcedCodexModel));
+		Args.Add(TEXT("-c"));
+		Args.Add(FString::Printf(TEXT("reasoning_effort=\"%s\""), ForcedCodexReasoning));
+		Args.Add(TEXT("-c"));
+		Args.Add(FString::Printf(TEXT("sandbox_mode=\"%s\""), ForcedCodexSandbox));
+		Args.Append(FilteredExtraArgs);
+		Args.Add(UserPromptOnly);
+
+		TArray<FString> QuotedArgs;
+		QuotedArgs.Reserve(Args.Num());
+		for (const FString& Arg : Args)
+		{
+			QuotedArgs.Add(QuoteForWindowsArgvWord(Arg));
+		}
+		return FString::Join(QuotedArgs, TEXT(" "));
+	}
+
+	bool WouldExceedWindowsCreateProcCommandLineLimit(const FString& CodexBinaryPath, const FString& Arguments)
+	{
+		constexpr int64 ConservativeWindowsCreateProcLimit = 30000;
+		const int64 FullCommandLineLen = 2LL + static_cast<int64>(CodexBinaryPath.Len()) + 1LL + static_cast<int64>(Arguments.Len());
+		return FullCommandLineLen > ConservativeWindowsCreateProcLimit;
+	}
+
+	bool IsQuotedWindowsExecutablePath(const FString& Path)
+	{
+		const FString Trimmed = Path.TrimStartAndEnd();
+		return Trimmed.StartsWith(TEXT("\"")) || Trimmed.EndsWith(TEXT("\""));
+	}
+
+	bool HasSupportedWindowsCodexExecutableExtension(const FString& Path)
+	{
+		return FPaths::GetExtension(Path, true).Equals(TEXT(".exe"), ESearchCase::IgnoreCase);
+	}
+
+	bool IsWindowsAppsProtectedPath(const FString& Path)
+	{
+		FString Normalized = Path.TrimStartAndEnd();
+		Normalized.ReplaceInline(TEXT("\\"), TEXT("/"), ESearchCase::CaseSensitive);
+		Normalized.ToLowerInline();
+		const FString SegmentPadded = FString::Printf(TEXT("/%s/"), *Normalized);
+		return SegmentPadded.Contains(TEXT("/windowsapps/"));
 	}
 
 	namespace
@@ -295,16 +423,6 @@ namespace UnrealMcp::Providers::Internal
 
 namespace
 {
-#if PLATFORM_WINDOWS
-	const TCHAR* CodexCliWindowsUnsupportedMessage = TEXT("Codex CLI provider is not supported on Windows. Use the CodexAppServer (Codex Desktop bridge) provider instead. See Docs/Release-2026-05.md.");
-
-	void ReportCodexCliWindowsUnsupported(FString& OutError)
-	{
-		OutError = CodexCliWindowsUnsupportedMessage;
-		UE_LOG(LogUnrealMcp, Warning, TEXT("%s"), CodexCliWindowsUnsupportedMessage);
-	}
-#endif
-
 	bool ContainsDangerousShellCharacters(const FString& Value, FString& OutFailureReason)
 	{
 		TArray<FString> DisallowedCharacters;
@@ -336,13 +454,16 @@ namespace
 		return false;
 	}
 
-	bool TokenizeExtraArgs(const FString& InExtraArgs, TArray<FString>& OutTokens, FString& OutError)
+	bool TokenizeExtraArgs(const FString& InExtraArgs, TArray<FString>& OutTokens, FString& OutError, bool bRejectShellMetacharacters = true)
 	{
-		FString FailureReason;
-		if (ContainsDangerousShellCharacters(InExtraArgs, FailureReason))
+		if (bRejectShellMetacharacters)
 		{
-			OutError = FString::Printf(TEXT("CodexExtraArgs %s"), *FailureReason);
-			return false;
+			FString FailureReason;
+			if (ContainsDangerousShellCharacters(InExtraArgs, FailureReason))
+			{
+				OutError = FString::Printf(TEXT("CodexExtraArgs %s"), *FailureReason);
+				return false;
+			}
 		}
 
 		FString Current;
@@ -599,10 +720,100 @@ namespace
 		static bool ValidateCodexConfig(const FAiProviderConfig& InConfig, TArray<FString>& OutFilteredExtraArgs, FString& OutError)
 		{
 #if PLATFORM_WINDOWS
-			static_cast<void>(InConfig);
-			static_cast<void>(OutFilteredExtraArgs);
-			ReportCodexCliWindowsUnsupported(OutError);
-			return false;
+			const FString TrimmedBinaryPath = InConfig.CodexBinaryPath.TrimStartAndEnd();
+			const FString PreferredWindowsPathHint = TEXT("%LOCALAPPDATA%\\OpenAI\\Codex\\bin\\<hash>\\codex.exe");
+			const FString WhereCodexCaveat = TEXT("where codex is diagnostic only and may return a shim or WindowsApps path that cannot be used here.");
+
+			if (TrimmedBinaryPath.IsEmpty())
+			{
+				OutError = FString::Printf(
+					TEXT("Provider '%s': Codex Binary Path is empty. Set it to the absolute codex.exe path, preferably %s. %s"),
+					*InConfig.Id,
+					*PreferredWindowsPathHint,
+					*WhereCodexCaveat);
+				return false;
+			}
+
+			if (::UnrealMcp::Providers::Internal::IsQuotedWindowsExecutablePath(TrimmedBinaryPath))
+			{
+				OutError = FString::Printf(
+					TEXT("Provider '%s': Codex Binary Path must be an unquoted absolute .exe path. UE quotes the executable path itself. Prefer %s. %s"),
+					*InConfig.Id,
+					*PreferredWindowsPathHint,
+					*WhereCodexCaveat);
+				return false;
+			}
+
+			if (FPaths::IsRelative(TrimmedBinaryPath))
+			{
+				OutError = FString::Printf(
+					TEXT("Provider '%s': Codex Binary Path must be absolute: %s. Prefer %s. %s"),
+					*InConfig.Id,
+					*TrimmedBinaryPath,
+					*PreferredWindowsPathHint,
+					*WhereCodexCaveat);
+				return false;
+			}
+
+			if (::UnrealMcp::Providers::Internal::LooksLikeLegacyCodexAgentPath(TrimmedBinaryPath))
+			{
+				OutError = FString::Printf(
+					TEXT("Provider '%s': Codex Binary Path points to the legacy codex-agent wrapper. v0.25 uses codex exec directly; "
+						 "set Codex Binary Path to codex.exe, preferably %s. codex-agent / bun / tmux are no longer required for the Codex CLI provider."),
+					*InConfig.Id,
+					*PreferredWindowsPathHint);
+				return false;
+			}
+
+			if (!::UnrealMcp::Providers::Internal::HasSupportedWindowsCodexExecutableExtension(TrimmedBinaryPath))
+			{
+				OutError = FString::Printf(
+					TEXT("Provider '%s': Codex Binary Path must point directly to codex.exe. .cmd/.bat npm shims require cmd.exe and are not supported by the Windows Codex CLI provider. Prefer %s. %s"),
+					*InConfig.Id,
+					*PreferredWindowsPathHint,
+					*WhereCodexCaveat);
+				return false;
+			}
+
+			if (::UnrealMcp::Providers::Internal::IsWindowsAppsProtectedPath(TrimmedBinaryPath))
+			{
+				OutError = FString::Printf(
+					TEXT("Provider '%s': Codex Binary Path points into the WindowsApps protected store namespace, which direct CreateProcess can reject with EPERM. Use the user-mode install path instead, preferably %s. %s"),
+					*InConfig.Id,
+					*PreferredWindowsPathHint,
+					*WhereCodexCaveat);
+				return false;
+			}
+
+			if (!FPaths::FileExists(TrimmedBinaryPath))
+			{
+				OutError = FString::Printf(
+					TEXT("Provider '%s': Codex Binary Path does not exist: %s. Prefer %s. %s"),
+					*InConfig.Id,
+					*TrimmedBinaryPath,
+					*PreferredWindowsPathHint,
+					*WhereCodexCaveat);
+				return false;
+			}
+
+			TArray<FString> Tokens;
+			if (!TokenizeExtraArgs(InConfig.CodexExtraArgs, Tokens, OutError, false))
+			{
+				OutError = FString::Printf(TEXT("Provider '%s': %s"), *InConfig.Id, *OutError);
+				return false;
+			}
+
+			if (::UnrealMcp::Providers::Internal::ContainsUnsupportedReasoningFlag(Tokens))
+			{
+				OutError = FString::Printf(
+					TEXT("Provider '%s': Codex Extra Args contains an unsupported -r/--reasoning flag. v0.25 uses codex exec which does NOT accept -r. "
+						 "Remove '-r <value>' (and any '-m gpt-5.5 -r xhigh'-style v0.24 default), or rewrite as '-c reasoning_effort=\"<value>\"'."),
+					*InConfig.Id);
+				return false;
+			}
+
+			OutFilteredExtraArgs = MoveTemp(Tokens);
+			return true;
 #else
 			const FString TrimmedBinaryPath = InConfig.CodexBinaryPath.TrimStartAndEnd();
 
@@ -662,6 +873,61 @@ namespace
 	private:
 		bool SpawnProcess(const TArray<FString>& FilteredExtraArgs, FString& OutError)
 		{
+#if PLATFORM_WINDOWS
+			const FString ProjectAbsoluteDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+			const FString CodexBinaryPath = Config.CodexBinaryPath.TrimStartAndEnd();
+			const FString Arguments = ::UnrealMcp::Providers::Internal::BuildCodexExecWindowsArguments(
+				UserPrompt,
+				ProjectAbsoluteDir,
+				FilteredExtraArgs);
+
+			if (::UnrealMcp::Providers::Internal::WouldExceedWindowsCreateProcCommandLineLimit(CodexBinaryPath, Arguments))
+			{
+				OutError = TEXT("Codex CLI request is too long for Windows CreateProcess: single message too long after command-line quoting. Shorten the latest prompt and retry.");
+				return false;
+			}
+
+			if (!FPlatformProcess::CreatePipe(StdoutReadPipe, StdoutWritePipe))
+			{
+				OutError = TEXT("Failed to create stdout pipe.");
+				return false;
+			}
+			if (!FPlatformProcess::CreatePipe(StderrReadPipe, StderrWritePipe))
+			{
+				OutError = TEXT("Failed to create stderr pipe.");
+				CleanupProcessResources();
+				return false;
+			}
+			if (!FPlatformProcess::CreatePipe(StdinReadPipe, StdinWritePipe, true))
+			{
+				OutError = TEXT("Failed to create stdin pipe.");
+				CleanupProcessResources();
+				return false;
+			}
+
+			uint32 ProcessId = 0;
+			ProcessHandle = FPlatformProcess::CreateProc(
+				*CodexBinaryPath,
+				*Arguments,
+				false,
+				true,
+				true,
+				&ProcessId,
+				0,
+				*ProjectAbsoluteDir,
+				StdoutWritePipe,
+				StdinReadPipe,
+				StderrWritePipe);
+
+			if (!ProcessHandle.IsValid())
+			{
+				CleanupProcessResources();
+				OutError = TEXT("Failed to launch codex.exe subprocess.");
+				return false;
+			}
+
+			return true;
+#else
 			const FString BashPath = TEXT("/bin/bash");
 			if (!FPaths::FileExists(BashPath))
 			{
@@ -717,6 +983,7 @@ namespace
 			}
 
 			return true;
+#endif
 		}
 
 		void WriteConversationContextToStdin()
@@ -1057,7 +1324,7 @@ namespace Providers
 {
 	const FString& GetCodexSubprocessPathPrefix()
 	{
-		// Augment PATH for subprocesses so a bare codex CLI path or its
+		// POSIX only: augment PATH for subprocesses so a bare codex CLI path or its
 		// interpreter shims resolve when Unreal Editor inherits a minimal macOS
 		// default PATH rather than the user's interactive shell PATH.
 		// Common Mac developer-tool dirs covered:
@@ -1085,8 +1352,6 @@ namespace Providers
 		//   (3) See Docs/AIProviderArchitecture.md Section B for the
 		//       CreateProc tokenizer rationale (UE Unix ParseCmdLineToken treats
 		//       `"` as a quote delimiter; literal `"` in argv breaks bash -c).
-		// Codex CLI is validated as Mac/Linux only; Windows users use
-		// CodexAppServer / Codex Desktop bridge instead.
 		static const FString Prefix = TEXT(
 			"PATH=$HOME/.bun/bin:$HOME/.local/bin:"
 			"$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH&&${IFS}");

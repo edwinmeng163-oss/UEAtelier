@@ -49,7 +49,7 @@ struct UNREALMCP_API FAiProviderConfig
 	UPROPERTY(EditAnywhere, Config, Category="AI", meta=(ClampMin="0", ToolTip="Per-provider output token limit. Set to 0 to fall back to the global AiMaxOutputTokens setting."))
 	int32 MaxOutputTokens = 4096;
 
-	UPROPERTY(EditAnywhere, Config, Category="AI", meta=(ToolTip="Path to the codex CLI binary (e.g. /opt/homebrew/bin/codex on Apple Silicon Homebrew). Find via `which codex` in a terminal. Used only by the Codex CLI provider. v0.25+ uses codex exec directly; codex-agent wrapper is no longer supported."))
+	UPROPERTY(EditAnywhere, Config, Category="AI", meta=(ToolTip="Path to the codex CLI binary (macOS example: /opt/homebrew/bin/codex; Windows example: %LOCALAPPDATA%\\OpenAI\\Codex\\bin\\<hash>\\codex.exe). Use `which codex` on POSIX; on Windows, `where codex` is diagnostic only and may return a shim or WindowsApps path. Used only by the Codex CLI provider; codex-agent wrapper is no longer supported."))
 	FString CodexBinaryPath;
 
 	UPROPERTY(EditAnywhere, Config, Category="AI", meta=(ToolTip="Additional flags appended to `codex exec` invocation. Uses codex CLI -c key=\"value\" syntax. Example: -c reasoning_effort=\"high\". Baseline flags (model, sandbox_mode, reasoning_effort) are auto-injected. v0.25 no longer accepts the legacy -r/--reasoning flags (codex exec rejects them)."))

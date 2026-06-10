@@ -88,6 +88,125 @@ bool FUnrealMcpCodexProviderExecCommandBuildTest::RunTest(const FString& Paramet
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FUnrealMcpCodexProviderWindowsArgvQuoteTest,
+	"UnrealMcp.CodexProvider.WindowsArgvQuote",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FUnrealMcpCodexProviderWindowsArgvQuoteTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace UnrealMcp::Providers::Internal;
+
+	TestEqual(TEXT("plain word unchanged"), QuoteForWindowsArgvWord(TEXT("plain")), FString(TEXT("plain")));
+	TestEqual(TEXT("embedded space quoted"), QuoteForWindowsArgvWord(TEXT("hello world")), FString(TEXT("\"hello world\"")));
+	TestEqual(TEXT("embedded double quote escaped"), QuoteForWindowsArgvWord(TEXT("say\"hi")), FString(TEXT("\"say\\\"hi\"")));
+	TestEqual(TEXT("trailing backslash before close quote doubled"), QuoteForWindowsArgvWord(TEXT("C:\\Dir With Space\\")), FString(TEXT("\"C:\\Dir With Space\\\\\"")));
+	TestEqual(TEXT("mid-word backslash run unchanged when unquoted"), QuoteForWindowsArgvWord(TEXT("C:\\Tools\\\\Codex\\codex.exe")), FString(TEXT("C:\\Tools\\\\Codex\\codex.exe")));
+	TestEqual(TEXT("empty string becomes quoted empty argv"), QuoteForWindowsArgvWord(TEXT("")), FString(TEXT("\"\"")));
+
+	FString UnicodeValue = TEXT("codex-");
+	UnicodeValue.AppendChar(static_cast<TCHAR>(0x6771));
+	TestEqual(TEXT("unicode passthrough"), QuoteForWindowsArgvWord(UnicodeValue), UnicodeValue);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FUnrealMcpCodexProviderWindowsArgumentBuildTest,
+	"UnrealMcp.CodexProvider.WindowsArgumentBuild",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FUnrealMcpCodexProviderWindowsArgumentBuildTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace UnrealMcp::Providers::Internal;
+
+	const FString UserPrompt = TEXT("prompt tail");
+	const FString ProjDir = TEXT("C:\\Unreal Projects\\UEvolve");
+	const TArray<FString> ExtraArgs = { TEXT("-c"), TEXT("model=\"custom\"") };
+
+	const FString Arguments = BuildCodexExecWindowsArguments(UserPrompt, ProjDir, ExtraArgs);
+	TestTrue(TEXT("Arguments start with exec"), Arguments.StartsWith(TEXT("exec ")));
+	TestTrue(TEXT("Arguments contain --json"), Arguments.Contains(TEXT("--json")));
+	TestTrue(TEXT("Arguments contain --ephemeral"), Arguments.Contains(TEXT("--ephemeral")));
+	TestTrue(TEXT("Arguments contain --skip-git-repo-check"), Arguments.Contains(TEXT("--skip-git-repo-check")));
+	TestTrue(TEXT("Arguments contain -C project dir"), Arguments.Contains(TEXT("-C \"C:\\Unreal Projects\\UEvolve\"")));
+	TestTrue(TEXT("Arguments contain baseline model"), Arguments.Contains(TEXT("model=\\\"gpt-5.5\\\"")));
+	TestTrue(TEXT("Arguments contain baseline reasoning_effort"), Arguments.Contains(TEXT("reasoning_effort=\\\"xhigh\\\"")));
+	TestTrue(TEXT("Arguments contain baseline sandbox_mode"), Arguments.Contains(TEXT("sandbox_mode=\\\"workspace-write\\\"")));
+	TestFalse(TEXT("Arguments exclude binary path"), Arguments.Contains(TEXT("codex.exe")));
+
+	const int32 BaselineModelIdx = Arguments.Find(TEXT("model=\\\"gpt-5.5\\\""));
+	const int32 BaselineReasoningIdx = Arguments.Find(TEXT("reasoning_effort=\\\"xhigh\\\""));
+	const int32 BaselineSandboxIdx = Arguments.Find(TEXT("sandbox_mode=\\\"workspace-write\\\""));
+	const int32 UserExtraIdx = Arguments.Find(TEXT("model=\\\"custom\\\""));
+	TestTrue(TEXT("baseline model before baseline reasoning"), BaselineModelIdx >= 0 && BaselineModelIdx < BaselineReasoningIdx);
+	TestTrue(TEXT("baseline reasoning before baseline sandbox"), BaselineReasoningIdx >= 0 && BaselineReasoningIdx < BaselineSandboxIdx);
+	TestTrue(TEXT("baseline flags before user extra args"), BaselineSandboxIdx >= 0 && BaselineSandboxIdx < UserExtraIdx);
+	TestTrue(TEXT("prompt is final argv word"), Arguments.EndsWith(TEXT("\"prompt tail\"")));
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FUnrealMcpCodexProviderWindowsCommandLineLimitTest,
+	"UnrealMcp.CodexProvider.WindowsCommandLineLimit",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FUnrealMcpCodexProviderWindowsCommandLineLimitTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace UnrealMcp::Providers::Internal;
+
+	auto RepeatChar = [](TCHAR Character, int32 Count)
+	{
+		FString Result;
+		Result.Reserve(Count);
+		for (int32 Index = 0; Index < Count; ++Index)
+		{
+			Result.AppendChar(Character);
+		}
+		return Result;
+	};
+
+	const FString BinaryPath = TEXT("C:\\Codex\\codex.exe");
+	const int32 MaxArgsAtThreshold = 30000 - (2 + BinaryPath.Len() + 1);
+	TestFalse(TEXT("command line at threshold accepted"),
+		WouldExceedWindowsCreateProcCommandLineLimit(BinaryPath, RepeatChar(TEXT('a'), MaxArgsAtThreshold)));
+	TestTrue(TEXT("command line over threshold rejected"),
+		WouldExceedWindowsCreateProcCommandLineLimit(BinaryPath, RepeatChar(TEXT('a'), MaxArgsAtThreshold + 1)));
+	TestTrue(TEXT("long binary path counts toward total"),
+		WouldExceedWindowsCreateProcCommandLineLimit(TEXT("C:\\") + RepeatChar(TEXT('b'), 29990) + TEXT("\\codex.exe"), TEXT("exec")));
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FUnrealMcpCodexProviderWindowsPathPredicatesTest,
+	"UnrealMcp.CodexProvider.WindowsPathPredicates",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FUnrealMcpCodexProviderWindowsPathPredicatesTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace UnrealMcp::Providers::Internal;
+
+	TestTrue(TEXT(".exe accepted"), HasSupportedWindowsCodexExecutableExtension(TEXT("C:\\Users\\me\\AppData\\Local\\OpenAI\\Codex\\bin\\abc\\codex.exe")));
+	TestFalse(TEXT(".cmd rejected"), HasSupportedWindowsCodexExecutableExtension(TEXT("C:\\Users\\me\\AppData\\Roaming\\npm\\codex.cmd")));
+	TestFalse(TEXT(".bat rejected"), HasSupportedWindowsCodexExecutableExtension(TEXT("C:\\Users\\me\\bin\\codex.bat")));
+	TestTrue(TEXT("quoted path rejected"), IsQuotedWindowsExecutablePath(TEXT("\"C:\\Users\\me\\codex.exe\"")));
+	TestFalse(TEXT("unquoted path accepted by quote predicate"), IsQuotedWindowsExecutablePath(TEXT("C:\\Users\\me\\codex.exe")));
+
+	TestTrue(TEXT("WindowsApps backslash path rejected"), IsWindowsAppsProtectedPath(TEXT("C:\\Program Files\\WindowsApps\\OpenAI.Codex\\codex.exe")));
+	TestTrue(TEXT("WindowsApps slash path rejected"), IsWindowsAppsProtectedPath(TEXT("C:/Program Files/WindowsApps/OpenAI.Codex/codex.exe")));
+	TestTrue(TEXT("WindowsApps mixed separators rejected"), IsWindowsAppsProtectedPath(TEXT("C:\\Program Files/WindowsApps\\OpenAI.Codex/codex.exe")));
+	TestTrue(TEXT("WindowsApps mixed case rejected"), IsWindowsAppsProtectedPath(TEXT("c:\\program files\\wInDoWsApPs\\OpenAI.Codex\\codex.exe")));
+	TestFalse(TEXT("user-mode install path not WindowsApps"), IsWindowsAppsProtectedPath(TEXT("C:\\Users\\me\\AppData\\Local\\OpenAI\\Codex\\bin\\abc\\codex.exe")));
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FUnrealMcpCodexProviderJsonlEventParserTest,
 	"UnrealMcp.CodexProvider.JsonlEventParser",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -105,6 +224,9 @@ bool FUnrealMcpCodexProviderJsonlEventParserTest::RunTest(const FString& Paramet
 
 	TestTrue(TEXT("turn.started parses"), ParseCodexJsonlEvent(TEXT("{\"type\":\"turn.started\"}"), Event));
 	TestEqual(TEXT("turn.started kind"), Event.Kind, EKind::TurnStarted);
+
+	TestTrue(TEXT("turn.started with trailing CR parses"), ParseCodexJsonlEvent(TEXT("{\"type\":\"turn.started\"}\r"), Event));
+	TestEqual(TEXT("turn.started CRLF kind"), Event.Kind, EKind::TurnStarted);
 
 	TestTrue(TEXT("item.completed agent_message parses"),
 		ParseCodexJsonlEvent(TEXT("{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"agent_message\",\"text\":\"hello world\"}}"), Event));

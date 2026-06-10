@@ -16,7 +16,7 @@ Anthropic.
 | OpenAiResponses | HTTP (Responses API) | SSE | Bearer token |
 | OpenAiChatCompat | HTTP (Chat Completions) | SSE / NDJSON | Bearer token |
 | AnthropicMessages | HTTP (Messages API) | SSE | x-api-key |
-| Codex | Subprocess (codex exec, one-shot non-interactive, JSONL stdout) | line-by-line JSONL events; reply text arrives as one `item.completed` event (no token-level deltas in v0.25) | OAuth via codex login |
+| Codex | Subprocess (`codex exec`, one-shot non-interactive, JSONL stdout; POSIX uses a bash wrapper, Windows spawns `codex.exe` directly) | line-by-line JSONL events; reply text arrives as one `item.completed` event (no token-level deltas in v0.25) | OAuth via codex login |
 | CodexAppServer | WebSocket (localhost) | JSON frames | OAuth via Codex Desktop |
 
 `EAiProviderKind` is append-only. Numeric values never change. See
@@ -38,15 +38,18 @@ HTTP providers share the same broad run lifecycle:
 
 Codex providers differ from HTTP providers:
 
-- `Codex` launches a local `codex exec` subprocess through `/bin/bash -c`;
+- `Codex` launches a local `codex exec` subprocess: `/bin/bash -c` on POSIX,
+  direct `codex.exe` on Windows;
 - `CodexAppServer` speaks to a local bridge WebSocket;
 - both rely on the user already being authenticated in the local Codex toolchain.
 
-## B. CodexProvider shell-escaping invariants (CRITICAL)
+## B. CodexProvider subprocess argument invariants (CRITICAL)
 
-The `Codex` provider is the only provider that builds an `Arguments` string for
-`FPlatformProcess::CreateProc`. That path must obey the following invariant
-list exactly:
+The `Codex` provider is the only provider that builds command-line strings for
+`FPlatformProcess::CreateProc`. Those paths must obey the invariant lists below
+exactly.
+
+### POSIX bash invariants
 
 - The full `Arguments` string passed to `FPlatformProcess::CreateProc` has exactly one literal ASCII space: the separator in `-c <command>`.
 - The full `Arguments` string contains zero literal ASCII double-quote characters (`0x22`).
@@ -127,6 +130,31 @@ The shell helpers are production code and test surface:
 The helper declarations live in the private header
 `Providers/CodexProviderExecHelpers.h` so integration tests can call the same
 code path as runtime. Tests must not reimplement shell construction logic.
+
+### Windows invariants
+
+- Windows spawns `codex.exe` directly. No shell intermediary and no `cmd.exe`.
+- UE 5.6 Windows `FPlatformProcess::CreateProc` builds the command line as
+  `"<URL>" <Parms>` and calls `CreateProcess` with `lpApplicationName = NULL`.
+  Therefore `CodexBinaryPath` is passed only as URL, UE auto-quotes it, and
+  the Windows argument builder must exclude the binary path.
+- `CodexBinaryPath` must be an unquoted absolute `.exe` path. `.cmd` and `.bat`
+  npm shims are rejected in v1 because they require `cmd.exe` interpretation.
+- `WindowsApps` paths are rejected because the protected Store namespace can
+  fail direct process creation with EPERM. Prefer the user-mode install under
+  `%LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe`; `where codex` is
+  diagnostic only and may return a shim or WindowsApps path.
+- The Windows argument string follows MSVC CRT / `CommandLineToArgvW` quoting
+  rules: quote only args that contain space, tab, quote, or are empty; double
+  backslashes before a quote; escape embedded quotes; double trailing
+  backslashes before the closing quote.
+- Command-line length is checked before spawn against the full UE-built command
+  line, `"<CodexBinaryPath>" <Arguments>`, with a conservative 30000-TCHAR
+  threshold under the 32767 `CreateProcessW` cap. Over-threshold single
+  messages fail before spawn; v1 does not chunk or move the latest prompt to
+  stdin.
+- ConversationContext still goes through stdin and the provider still uses the
+  three-pipe `CreateProc` overload so stdout, stdin, and stderr stay separate.
 
 ## C. Settings UI architecture
 
@@ -232,15 +260,16 @@ non-`PostInitProperties` helper instead.
 
 `FPaths::FileExists` does not expand `~` (tilde). The preset default for
 `CodexBinaryPath` is now empty, but user-entered `~/...` paths remain literal
-and fail validation. Users must supply the absolute path returned by
-`which codex`. See Section G2.
+and fail validation. Users must supply an absolute path: `which codex` on
+POSIX, or the expanded user-mode `codex.exe` path on Windows. See Section G2.
 
 `FPlatformProcess::CreateProc` can wire three pipes at once: stdout child write,
 stdin child read, and stderr child write. For Codex CLI, stdout is JSONL,
 stderr carries process/auth diagnostics, and stdin carries ConversationContext.
-On Mac, `WritePipe` blocks on the write side by design, so large stdin payloads
-must be written from the worker pump thread in chunks and the stdin write end
-must be closed afterward to signal EOF.
+On macOS and Windows this pipe setup is verified: the child inherits the stdin
+read end, the parent writes raw bytes to the local write end, and the stdin
+write end must be closed afterward to signal EOF. Large stdin payloads must be
+written from the worker pump thread in chunks.
 
 `meta=(DeprecatedProperty)` does not hide a `UPROPERTY` from the Property
 Editor. Remove `EditAnywhere` for deprecated config values that should still
@@ -265,6 +294,9 @@ tmux pane that the parent never reads.
 **Resolution**: v0.25 Reform B uses `codex exec --json --ephemeral` directly.
 The provider now reads stdout JSONL events from the child process and emits the
 `agent_message` text back to UE Assistant when the one-shot process exits.
+The Windows direct-spawn extension (2026-06) later brought the same Codex CLI
+provider to Windows by spawning `codex.exe` directly with CRT-quoted argv words,
+while keeping the POSIX bash wrapper path for macOS/Linux.
 
 ### G2 - Tilde not expanded in `CodexBinaryPath` (v0.24.5 candidate)
 

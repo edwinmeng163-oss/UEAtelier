@@ -60,6 +60,35 @@ namespace UnrealMcp::Providers::Internal
 		const FString& ProjectAbsoluteDir,
 		const TArray<FString>& FilteredExtraArgs);
 
+	// Quote one Windows argv word using MSVC CRT / CommandLineToArgvW rules.
+	// Pure string helper; it builds on all platforms so macOS automation can
+	// guard Windows command construction.
+	FString QuoteForWindowsArgvWord(const FString& Value);
+
+	// Build the <Parms> string for direct Windows CreateProc(URL=codex.exe,
+	// Parms=<output>) execution. The returned string deliberately excludes the
+	// binary path because UE quotes URL itself on Windows before appending Parms.
+	FString BuildCodexExecWindowsArguments(
+		const FString& UserPromptOnly,
+		const FString& ProjectAbsoluteDir,
+		const TArray<FString>& FilteredExtraArgs);
+
+	// Conservative guard for UE's Windows CreateProc command line:
+	//   "<CodexBinaryPath>" <Arguments>
+	// Counts UTF-16/TCHAR code units and fails before the 32767 cap.
+	bool WouldExceedWindowsCreateProcCommandLineLimit(const FString& CodexBinaryPath, const FString& Arguments);
+
+	// Reject user-entered quoted Windows executable paths. UE quotes URL itself.
+	bool IsQuotedWindowsExecutablePath(const FString& Path);
+
+	// True only for direct .exe paths. .cmd/.bat shims require cmd.exe and are
+	// rejected by the Windows Codex CLI provider.
+	bool HasSupportedWindowsCodexExecutableExtension(const FString& Path);
+
+	// Detect protected Windows Store namespace paths such as
+	// C:\Program Files\WindowsApps\..., accepting slash styles and case variants.
+	bool IsWindowsAppsProtectedPath(const FString& Path);
+
 	// ============================================================
 	// JSONL stream parser (v0.25 NEW)
 	// ============================================================

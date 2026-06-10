@@ -244,8 +244,9 @@ changes, permission escalation, MCP elicitation, and user-input requests are not
 allowed in V1. See `Tools/UnrealMcpCodexBridge/README.md` for protocol,
 configuration, per-turn model/effort selection, logging, and limitations. The
 separate Codex CLI subprocess provider remains locked to `gpt-5.5` with `xhigh`
-reasoning and is supported on macOS/Linux only; Windows users should use the
-`CodexAppServer` bridge provider.
+reasoning and works on macOS, Linux, and Windows when `codex login` is complete
+and the provider points to the local `codex` / `codex.exe` binary.
+`CodexAppServer` remains available as the Codex Desktop bridge provider.
 
 ## External CLI
 
