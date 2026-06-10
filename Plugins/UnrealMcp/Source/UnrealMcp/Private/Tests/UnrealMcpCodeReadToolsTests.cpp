@@ -76,6 +76,56 @@ namespace
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FUnrealMcpCodeReadToolsExclusionPredicateTest,
+	"UnrealMcp.Code.ReadToolsExclusionPredicate",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FUnrealMcpCodeReadToolsExclusionPredicateTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	const TArray<FString> ExcludedPaths = {
+		TEXT("Binaries/x.h"),
+		TEXT("Intermediate/x.h"),
+		TEXT("Saved/x.json"),
+		TEXT("Content/x.py"),
+		TEXT("Plugins/UnrealMcp/Intermediate/Build/x.h"),
+		TEXT("Examples/Host/Intermediate/Build/x.h"),
+		TEXT("Examples/Host/intermediate/Build/x.h"),
+		TEXT("Examples/Host/Binaries/Mac/x.txt"),
+		TEXT(".claude/worktrees/wt/Plugins/UnrealMcp/Source/x.cpp"),
+		TEXT(".git/config.txt"),
+		TEXT("Tools/UnrealMcpCodexBridge/node_modules/pkg/index.txt"),
+		TEXT("Tools/Foo/Node_Modules/pkg/x.txt"),
+		TEXT("A/B/C/DerivedDataCache/x.txt")
+	};
+
+	for (const FString& Path : ExcludedPaths)
+	{
+		const FString Message = FString::Printf(TEXT("excluded: %s"), *Path);
+		TestTrue(*Message, UnrealMcp::CodeToolsIsExcludedProjectRelativePath(Path));
+	}
+
+	const TArray<FString> IncludedPaths = {
+		TEXT("Source/UEvolve/UEvolve.Build.cs"),
+		TEXT("Plugins/UnrealMcp/Source/UnrealMcp/Private/UnrealMcpModule.cpp"),
+		TEXT("Examples/Host/Source/MyProject/x.cpp"),
+		TEXT("Examples/Host/Content/Scripts/x.py"),
+		TEXT("Tools/UnrealMcpPyTools/tool/handler.py"),
+		TEXT("Config/DefaultEngine.ini"),
+		TEXT("Docs/Architecture.md")
+	};
+
+	for (const FString& Path : IncludedPaths)
+	{
+		const FString Message = FString::Printf(TEXT("included: %s"), *Path);
+		TestFalse(*Message, UnrealMcp::CodeToolsIsExcludedProjectRelativePath(Path));
+	}
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FUnrealMcpCodeReadToolsTest,
 	"UnrealMcp.Code.ReadTools",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

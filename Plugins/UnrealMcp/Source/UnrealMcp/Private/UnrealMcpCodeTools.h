@@ -25,6 +25,8 @@ namespace UnrealMcp
 
 	FString LexToString(ECodePathClassification Classification);
 
+	bool CodeToolsIsExcludedProjectRelativePath(const FString& ProjectRelativePath);
+
 	FCodePathPolicy ClassifyCodePath_Pure(
 		const FString& ProjectDir,
 		const FString& PluginBaseDir,

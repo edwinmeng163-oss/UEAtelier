@@ -344,31 +344,6 @@ namespace UnrealMcp
 			return false;
 		}
 
-		bool CodeToolsIsExcludedProjectRelativePath(const FString& ProjectRelativePath)
-		{
-			TArray<FString> Parts;
-			ProjectRelativePath.ParseIntoArray(Parts, TEXT("/"), false);
-			if (Parts.Num() == 0)
-			{
-				return false;
-			}
-			const FString First = Parts[0];
-			if (First.Equals(TEXT("Binaries"), ESearchCase::IgnoreCase)
-				|| First.Equals(TEXT("Intermediate"), ESearchCase::IgnoreCase)
-				|| First.Equals(TEXT("DerivedDataCache"), ESearchCase::IgnoreCase)
-				|| First.Equals(TEXT("Saved"), ESearchCase::IgnoreCase)
-				|| First.Equals(TEXT("Content"), ESearchCase::IgnoreCase))
-			{
-				return true;
-			}
-			if (Parts.Num() >= 3 && First.Equals(TEXT("Plugins"), ESearchCase::IgnoreCase))
-			{
-				return Parts[2].Equals(TEXT("Binaries"), ESearchCase::IgnoreCase)
-					|| Parts[2].Equals(TEXT("Intermediate"), ESearchCase::IgnoreCase);
-			}
-			return false;
-		}
-
 		bool CodeToolsIsSavedCodeChangesTarget(const FString& ProjectRelativePath)
 		{
 			return ProjectRelativePath.Equals(TEXT("Saved/UnrealMcp/CodeChanges"), ESearchCase::IgnoreCase)
@@ -2566,6 +2541,36 @@ namespace UnrealMcp
 				CodeToolsMakeRollbackResponse(Plan, RollbackManifestPath, false, bForce && Plan.bDriftDetected, RestoredFiles),
 				false);
 		}
+	}
+
+	bool CodeToolsIsExcludedProjectRelativePath(const FString& ProjectRelativePath)
+	{
+		TArray<FString> Parts;
+		ProjectRelativePath.ParseIntoArray(Parts, TEXT("/"), false);
+		if (Parts.Num() == 0)
+		{
+			return false;
+		}
+
+		if (Parts[0].Equals(TEXT("Content"), ESearchCase::IgnoreCase))
+		{
+			return true;
+		}
+
+		for (const FString& Part : Parts)
+		{
+			if (Part.StartsWith(TEXT("."), ESearchCase::CaseSensitive)
+				|| Part.Equals(TEXT("Binaries"), ESearchCase::IgnoreCase)
+				|| Part.Equals(TEXT("Intermediate"), ESearchCase::IgnoreCase)
+				|| Part.Equals(TEXT("DerivedDataCache"), ESearchCase::IgnoreCase)
+				|| Part.Equals(TEXT("Saved"), ESearchCase::IgnoreCase)
+				|| Part.Equals(TEXT("node_modules"), ESearchCase::IgnoreCase))
+			{
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	FString LexToString(ECodePathClassification Classification)
