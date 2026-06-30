@@ -326,3 +326,46 @@ zero collisions). The 8 open decisions are resolved as:
 
 Only decision-3's policy-delegation implementation (Phase B). Coexistence and
 runtime-hot authoring are now proven.
+
+---
+
+## Progress (as of 2026-07-01)
+
+All work is committed on `experiment/v0.33-ue58-validation` (never merged to main),
+regression-clean (full `UnrealMcp.*` automation converges to exactly the two known
+baselines `RunRecoversStale` + `PieSmoke.MapValidation`); UE5.8 + UE5.7
+gate-exclusion builds green; tool count stays 190.
+
+**Spikes (both PASS):**
+- Spike 1 — official Python `ToolsetDefinition` is runtime-hot end to end (register +
+  reload with no editor restart, callable via official `:8000/mcp`).
+- Spike 2 — our `:8765` and official `:8000` servers coexist in one UE5.8 editor with
+  zero route/bind collisions. (Spike 3, `MCPClientToolset` → our server, not run.)
+
+**Phase B — DONE:**
+- Chunk 1 (`f6fe66b`, `8e45bf2`) — compat gate `UNREALMCP_HAS_OFFICIAL_TOOLSETS` +
+  Build.cs conditional deps + uplugin Optional refs; a delegating official Python
+  toolset + raw-mutation validator under `Tools/UnrealMcpOfficialToolsets/`; and
+  `call_tool` now writes a real ActivityLog `tool_call` audit entry on every call.
+  Red line proven: official calls cannot bypass policy/audit.
+- Chunk 2 (`59efdc6`) — the compat-gated Workbench "Official MCP Server (UE5.8)" card:
+  status lambda + Start/Stop button wired to `IModelContextProtocolModule::StartServer/
+  StopServer`, opt-in/default-OFF. Runtime proven via the console-command path.
+  PENDING: a human GUI-mode Workbench smoke on UE5.8 (UI-class verification).
+
+**Phase C — IN PROGRESS:**
+- Chunk C1 (`08d52f9`) — DONE: the official-Python tool **generator** engine.
+  `BuildOfficialToolsetFiles` emits a delegating `ToolsetDefinition` module + manifest,
+  staged → validated (validator aborts on issues) → published to
+  `Saved/UnrealMcp/OfficialToolsetDrafts/` → registered/rolled-back via the engine
+  ToolsetRegistry. Proven by in-process Automation test
+  `UnrealMcp.OfficialToolset.Generation`
+  (generate → validate → register → `execute_tool` → audit → rollback).
+- Chunk C2 — NEXT: wire `emitOfficial` onto the existing `task_atlas_make_composite`
+  descriptor + the Make Tool Set button/window (no new tool).
+- Chunk C3 — C++ `UToolsetDefinition` path (decision #6: generate → build → restart).
+- Chunk C4 — AgentSkill promotion (instruction-only) + manifest `schemaHash` drift
+  detector + docs/freshness sweep.
+
+**Deferred / tracked:** protocol bump `:8765` → `2025-11-25` (decision #8 follow-up);
+the GUI Workbench smoke of the chunk-2 toggle.
