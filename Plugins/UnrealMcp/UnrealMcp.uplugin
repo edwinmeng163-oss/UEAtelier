@@ -19,6 +19,16 @@
 		{
 			"Name": "PythonScriptPlugin",
 			"Enabled": true
+		},
+		{
+			"Name": "ToolsetRegistry",
+			"Enabled": true,
+			"Optional": true
+		},
+		{
+			"Name": "ModelContextProtocol",
+			"Enabled": true,
+			"Optional": true
 		}
 	]
 }

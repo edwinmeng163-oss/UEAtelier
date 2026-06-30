@@ -1,7 +1,37 @@
+using System.IO;
 using UnrealBuildTool;
 
 public class UnrealMcp : ModuleRules
 {
+	private bool HasOfficialToolsetModules(ReadOnlyTargetRules Target)
+	{
+		bool bIsEngine58OrNewer =
+			Target.Version.MajorVersion > 5 ||
+			(Target.Version.MajorVersion == 5 && Target.Version.MinorVersion >= 8);
+		if (!bIsEngine58OrNewer)
+		{
+			return false;
+		}
+
+		string ToolsetRegistryBuildCs = Path.Combine(
+			EngineDirectory,
+			"Plugins",
+			"Experimental",
+			"ToolsetRegistry",
+			"Source",
+			"ToolsetRegistry",
+			"ToolsetRegistry.Build.cs");
+		string ModelContextProtocolBuildCs = Path.Combine(
+			EngineDirectory,
+			"Plugins",
+			"Experimental",
+			"ModelContextProtocol",
+			"Source",
+			"ModelContextProtocol",
+			"ModelContextProtocol.Build.cs");
+		return File.Exists(ToolsetRegistryBuildCs) && File.Exists(ModelContextProtocolBuildCs);
+	}
+
 	public UnrealMcp(ReadOnlyTargetRules Target) : base(Target)
 	{
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
@@ -56,5 +86,14 @@ public class UnrealMcp : ModuleRules
 			"UnrealEd",
 			"WebSockets"
 		});
+
+		if (HasOfficialToolsetModules(Target))
+		{
+			PrivateDependencyModuleNames.AddRange(new[]
+			{
+				"ToolsetRegistry",
+				"ModelContextProtocol"
+			});
+		}
 	}
 }

@@ -107,6 +107,7 @@ Plugins/UnrealMcp/Source/UnrealMcp/
 Schemas/
 Tools/UEAtelierCli/
 Tools/UnrealMcpCodexBridge/, Tools/UnrealMcpKnowledge/
+Tools/UnrealMcpOfficialToolsets/
 Tools/UnrealMcpPyToolSamples/, Tools/UnrealMcpSkills/, Tools/UnrealMcpTests/
 Tools/UnrealMcpToolRegistry/, Tools/UnrealMcpToolScaffoldStarters/
 Tools/UnrealMcpToolDocs/
@@ -152,6 +153,11 @@ drafts unless explicitly asked.
   `call_tool` / `call_tool_raw` helpers that route through the UFUNCTION
   `unreal.UnrealMcpCallTool.call_tool` into visible core `unreal.*` tools with
   allow / force-dry-run / deny policy, depth=1, and `user.*` targets forbidden.
+- UE 5.8 official ToolsetRegistry adapter proof: one read-only official
+  Python toolset under `Tools/UnrealMcpOfficialToolsets/` delegates to
+  `unreal.UnrealMcpCallTool.call_tool`; official toolsets provide discovery and
+  invocation only and must never bypass UEAtelier policy or ActivityLog audit
+  execution.
 - RAG/recommendation, memory, skills, Task Atlas, and verification:
   knowledge index/search/eval, tool/workflow recommend, project memory CRUD,
   skill activity/drafts/promote, task extract/list/describe/rate/pin/promote,
@@ -316,7 +322,8 @@ python3 Tools/validate_tool_registry.py
 
 ```text
 Lifecycle/protocol: UnrealMcpModule.cpp, UnrealMcpProtocol.cpp,
-  UnrealMcpProtocolBuilders.h
+  UnrealMcpProtocolBuilders.h, UnrealMcpEngineCompat.h,
+  UnrealMcp.Build.cs
 Tool metadata: UnrealMcpToolDefinitions.cpp, UnrealMcpToolDescriptor.h,
   UnrealMcpToolRegistrar.cpp/.h, UnrealMcpToolRegistry.cpp/.h,
   UnrealMcpToolHandlerRegistry.cpp/.h, UnrealMcpToolDispatcher.cpp

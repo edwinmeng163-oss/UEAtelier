@@ -7,6 +7,20 @@
 #include "Dom/JsonValue.h"
 #include "Runtime/Launch/Resources/Version.h"
 
+#if ENGINE_MAJOR_VERSION > 5 || (ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 8)
+#if defined(__has_include)
+#if __has_include("ToolsetRegistry/ToolsetDefinition.h") && __has_include("IModelContextProtocolModule.h")
+#define UNREALMCP_HAS_OFFICIAL_TOOLSETS 1
+#else
+#define UNREALMCP_HAS_OFFICIAL_TOOLSETS 0
+#endif
+#else
+#define UNREALMCP_HAS_OFFICIAL_TOOLSETS 0
+#endif
+#else
+#define UNREALMCP_HAS_OFFICIAL_TOOLSETS 0
+#endif
+
 #if ENGINE_MAJOR_VERSION > 5 || (ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 7)
 #include "Misc/StringOutputDevice.h"
 #else
