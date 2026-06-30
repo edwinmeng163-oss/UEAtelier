@@ -1,8 +1,10 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "UnrealMcpEngineCompat.h"
 
 class FJsonObject;
+class FJsonValue;
 
 namespace UnrealMcp
 {
@@ -21,6 +23,45 @@ namespace UnrealMcp
 		TArray<FTaskAtlasStepRef> StepRefs;
 		TArray<FString> CriticalPath;
 	};
+}
+
+namespace UnrealMcp::TaskAtlasComposite
+{
+#if UNREALMCP_HAS_OFFICIAL_TOOLSETS
+	struct FOfficialToolsetToolInfo
+	{
+		FString Name;
+		TMap<FString, FString> ParamSchemaTypes;
+		FString ReturnType;
+		FString GovernedToolId;
+		TSharedPtr<FJsonObject> ArgsTemplate;
+	};
+
+	struct FOfficialToolsetBuildProduct
+	{
+		FString ModuleName;
+		FString ClassName;
+		FString ToolsetName;
+		FString MainPy;
+		FString MainPySha256;
+		FString ManifestJson;
+		FString SchemaHash;
+		TArray<FOfficialToolsetToolInfo> Tools;
+	};
+
+	bool BuildOfficialToolsetFiles(
+		const FString& ToolId,
+		const FString& Title,
+		const FString& Description,
+		const FString& TaskId,
+		const FString& ReplayEligibility,
+		const FString& ReplayUnavailableReason,
+		const TArray<FString>& CriticalPath,
+		const TArray<TSharedPtr<FJsonValue>>& StepRefs,
+		const TSet<FString>& VisibleCoreToolNames,
+		FOfficialToolsetBuildProduct& OutProduct,
+		FString& OutFailureReason);
+#endif
 }
 
 namespace UnrealMcp::TaskAtlasService
@@ -197,6 +238,48 @@ namespace UnrealMcp::TaskAtlasService
 		bool bDryRun = false;
 	};
 
+#if UNREALMCP_HAS_OFFICIAL_TOOLSETS
+	struct FOfficialToolsetDraftRequest
+	{
+		FString ToolId;
+		FString Title;
+		FString Description;
+		FString TaskId;
+		FString ReplayEligibility = TEXT("preview_ready");
+		FString ReplayUnavailableReason;
+		TArray<FString> CriticalPath;
+		TArray<TSharedPtr<FJsonValue>> StepRefs;
+		TSet<FString> VisibleCoreToolNames;
+	};
+
+	struct FOfficialToolsetDraftResult
+	{
+		bool bSucceeded = false;
+		FString ErrorCode;
+		FString ErrorMessage;
+		FString GeneratedDir;
+		FString StagingDir;
+		FString ModulePath;
+		FString ManifestPath;
+		FString ModuleName;
+		FString ClassName;
+		FString ToolsetName;
+		FString MainPySha256;
+		FString ManifestJson;
+		FString FailureDiagnosticPath;
+		TArray<FString> ToolNames;
+		TArray<FString> ValidatorIssues;
+	};
+
+	struct FOfficialToolsetRollbackResult
+	{
+		bool bSucceeded = false;
+		FString ErrorCode;
+		FString ErrorMessage;
+		FString UpdatedManifestJson;
+	};
+#endif
+
 	struct FUserToolView
 	{
 		FString ToolName;
@@ -220,6 +303,11 @@ namespace UnrealMcp::TaskAtlasService
 #if WITH_DEV_AUTOMATION_TESTS
 	void SetMadeToolsRootDirForTests(const FString& RootDir);
 	void ClearMadeToolsRootDirForTests();
+#endif
+#if UNREALMCP_HAS_OFFICIAL_TOOLSETS
+	FString OfficialToolsetDraftsRootDir();
+	FOfficialToolsetDraftResult GenerateOfficialToolsetDraft(const FOfficialToolsetDraftRequest& Req);
+	FOfficialToolsetRollbackResult RollbackOfficialToolsetDraft(const FString& ToolsetName, const FString& ModuleName, const FString& GeneratedDir);
 #endif
 	FPromoteToRagResult PromoteToRag(const FPromoteToRagRequest& Req);
 	FPromoteToRagResult PromoteToRag(const FString& TaskId);

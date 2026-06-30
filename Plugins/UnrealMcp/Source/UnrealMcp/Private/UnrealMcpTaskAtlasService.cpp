@@ -6,11 +6,16 @@
 #include "UnrealMcpHashUtils.h"
 #include "UnrealMcpModule.h"
 #include "UnrealMcpSelfExtensionTools.h"
+#include "UnrealMcpSharedPathResolver.h"
 #include "UnrealMcpToolRegistry.h"
 #include "UnrealMcpTaskAtlasTools.h"
 #include "UnrealMcpUserToolListVersion.h"
 #include "UnrealMcpUserToolLock.h"
 #include "UnrealMcpUserToolRegistry.h"
+
+#if UNREALMCP_HAS_OFFICIAL_TOOLSETS
+#include "IPythonScriptPlugin.h"
+#endif
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -23,6 +28,7 @@
 #include "Misc/Guid.h"
 #include "Misc/Paths.h"
 #include "Misc/ScopeLock.h"
+#include "Modules/ModuleManager.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
 #include "Policies/PrettyJsonPrintPolicy.h"
 #include "Serialization/JsonReader.h"
@@ -53,6 +59,20 @@ namespace UnrealMcp::TaskAtlasComposite
 		TSharedPtr<FJsonObject>& OutSmokeArgs,
 		TArray<FString>& OutStepTools,
 		FString& OutFailureReason);
+#if UNREALMCP_HAS_OFFICIAL_TOOLSETS
+	bool BuildOfficialToolsetFiles(
+		const FString& ToolId,
+		const FString& Title,
+		const FString& Description,
+		const FString& TaskId,
+		const FString& ReplayEligibility,
+		const FString& ReplayUnavailableReason,
+		const TArray<FString>& CriticalPath,
+		const TArray<TSharedPtr<FJsonValue>>& StepRefs,
+		const TSet<FString>& VisibleCoreToolNames,
+		FOfficialToolsetBuildProduct& OutProduct,
+		FString& OutFailureReason);
+#endif
 }
 
 namespace UnrealMcp::UnrealMcpUserToolSmokeTool
@@ -1256,6 +1276,381 @@ namespace UnrealMcp::TaskAtlasService
 				: FString();
 		}
 
+#if UNREALMCP_HAS_OFFICIAL_TOOLSETS
+		FString TaskAtlasServiceOfficialDraftsRootDir()
+		{
+			return TaskAtlasServiceNormalizeAbsolutePath(FPaths::Combine(TaskAtlasServiceSavedRootDir(), TEXT("OfficialToolsetDrafts")));
+		}
+
+		FString TaskAtlasServiceQuoteCommandLineArgument(FString Value)
+		{
+			Value.ReplaceInline(TEXT("\\"), TEXT("\\\\"), ESearchCase::CaseSensitive);
+			Value.ReplaceInline(TEXT("\""), TEXT("\\\""), ESearchCase::CaseSensitive);
+			return TEXT("\"") + Value + TEXT("\"");
+		}
+
+		FString TaskAtlasServicePythonStringLiteral(const FString& Value)
+		{
+			FString Result = TEXT("\"");
+			for (const TCHAR Character : Value)
+			{
+				if (Character == TEXT('\\'))
+				{
+					Result += TEXT("\\\\");
+				}
+				else if (Character == TEXT('"'))
+				{
+					Result += TEXT("\\\"");
+				}
+				else if (Character == TEXT('\n'))
+				{
+					Result += TEXT("\\n");
+				}
+				else if (Character == TEXT('\r'))
+				{
+					Result += TEXT("\\r");
+				}
+				else if (Character == TEXT('\t'))
+				{
+					Result += TEXT("\\t");
+				}
+				else
+				{
+					Result.AppendChar(Character);
+				}
+			}
+			Result += TEXT("\"");
+			return Result;
+		}
+
+		TArray<TSharedPtr<FJsonValue>> TaskAtlasServiceMakeIssueValues(const TArray<FString>& Issues)
+		{
+			TArray<TSharedPtr<FJsonValue>> Values;
+			for (const FString& Issue : Issues)
+			{
+				Values.Add(MakeShared<FJsonValueString>(Issue));
+			}
+			return Values;
+		}
+
+		bool TaskAtlasServiceResolveOfficialValidatorPath(FString& OutValidatorPath, FString& OutFailureReason)
+		{
+			OutValidatorPath.Reset();
+			OutFailureReason.Reset();
+			const FToolsReadResolution Resolution = ResolveToolsReadSubpath(
+				TEXT("UnrealMcpOfficialToolsets/validate_official_toolset.py"),
+				{ TEXT("validate_official_toolset.py") });
+			if (!Resolution.bFound || !FPaths::FileExists(Resolution.Path))
+			{
+				OutFailureReason = Resolution.Warning.IsEmpty()
+					? FString(TEXT("Could not resolve Tools/UnrealMcpOfficialToolsets/validate_official_toolset.py."))
+					: Resolution.Warning;
+				return false;
+			}
+			OutValidatorPath = Resolution.Path;
+			return true;
+		}
+
+		bool TaskAtlasServiceRunOfficialValidator(
+			const FString& SourcePath,
+			TArray<FString>& OutIssues,
+			FString& OutFailureReason)
+		{
+			OutIssues.Reset();
+			OutFailureReason.Reset();
+
+			FString ValidatorPath;
+			if (!TaskAtlasServiceResolveOfficialValidatorPath(ValidatorPath, OutFailureReason))
+			{
+				OutIssues.Add(OutFailureReason);
+				return false;
+			}
+
+			const FString Params = FString::Printf(
+				TEXT("%s %s"),
+				*TaskAtlasServiceQuoteCommandLineArgument(ValidatorPath),
+				*TaskAtlasServiceQuoteCommandLineArgument(SourcePath));
+			int32 ReturnCode = -1;
+			FString StdOut;
+			FString StdErr;
+			const bool bLaunched = FPlatformProcess::ExecProcess(
+#if PLATFORM_MAC
+				TEXT("/usr/bin/python3"),
+#else
+				TEXT("python3"),
+#endif
+				*Params,
+				&ReturnCode,
+				&StdOut,
+				&StdErr,
+				*FPaths::ProjectDir());
+
+			TArray<FString> Lines;
+			(StdOut + TEXT("\n") + StdErr).ParseIntoArrayLines(Lines, true);
+			for (const FString& Line : Lines)
+			{
+				const FString Trimmed = Line.TrimStartAndEnd();
+				if (!Trimmed.IsEmpty())
+				{
+					OutIssues.Add(Trimmed);
+				}
+			}
+
+			if (!bLaunched)
+			{
+				OutFailureReason = TEXT("Failed to launch python3 for official toolset validation.");
+				OutIssues.Add(OutFailureReason);
+				return false;
+			}
+			if (ReturnCode != 0)
+			{
+				OutFailureReason = FString::Printf(TEXT("Official toolset validator exited with code %d."), ReturnCode);
+				if (OutIssues.Num() == 0)
+				{
+					OutIssues.Add(OutFailureReason);
+				}
+				return false;
+			}
+			if (OutIssues.Num() > 0)
+			{
+				OutFailureReason = TEXT("Official toolset validator returned issues.");
+				return false;
+			}
+			return true;
+		}
+
+		void TaskAtlasServiceUpdateOfficialManifestPaths(
+			TSharedPtr<FJsonObject>& Manifest,
+			const FString& ModulePath,
+			const FString& SourcePath,
+			const FString& DeletePath)
+		{
+			if (!Manifest.IsValid())
+			{
+				Manifest = MakeShared<FJsonObject>();
+			}
+			Manifest->SetStringField(TEXT("modulePath"), ModulePath);
+			Manifest->SetStringField(TEXT("sourcePath"), SourcePath);
+			TSharedPtr<FJsonObject> Rollback;
+			const TSharedPtr<FJsonObject>* ExistingRollback = nullptr;
+			if (Manifest->TryGetObjectField(TEXT("rollback"), ExistingRollback) && ExistingRollback && (*ExistingRollback).IsValid())
+			{
+				Rollback = *ExistingRollback;
+			}
+			else
+			{
+				Rollback = MakeShared<FJsonObject>();
+				Manifest->SetObjectField(TEXT("rollback"), Rollback);
+			}
+			Rollback->SetStringField(TEXT("deletePath"), DeletePath);
+		}
+
+		void TaskAtlasServiceUpdateOfficialValidatorStatus(
+			TSharedPtr<FJsonObject>& Manifest,
+			bool bPassed,
+			const TArray<FString>& Issues)
+		{
+			if (!Manifest.IsValid())
+			{
+				Manifest = MakeShared<FJsonObject>();
+			}
+			TSharedPtr<FJsonObject> ValidatorStatus;
+			const TSharedPtr<FJsonObject>* ExistingValidatorStatus = nullptr;
+			if (Manifest->TryGetObjectField(TEXT("validatorStatus"), ExistingValidatorStatus) && ExistingValidatorStatus && (*ExistingValidatorStatus).IsValid())
+			{
+				ValidatorStatus = *ExistingValidatorStatus;
+			}
+			else
+			{
+				ValidatorStatus = MakeShared<FJsonObject>();
+				Manifest->SetObjectField(TEXT("validatorStatus"), ValidatorStatus);
+			}
+			ValidatorStatus->SetBoolField(TEXT("passed"), bPassed);
+			ValidatorStatus->SetArrayField(TEXT("issues"), TaskAtlasServiceMakeIssueValues(Issues));
+			ValidatorStatus->SetStringField(TEXT("validatedAt"), FDateTime::UtcNow().ToIso8601());
+		}
+
+		void TaskAtlasServiceUpdateOfficialRegistrationStatus(
+			TSharedPtr<FJsonObject>& Manifest,
+			const FString& State,
+			const FString& LastError)
+		{
+			if (!Manifest.IsValid())
+			{
+				Manifest = MakeShared<FJsonObject>();
+			}
+			TSharedPtr<FJsonObject> RegistrationStatus;
+			const TSharedPtr<FJsonObject>* ExistingRegistrationStatus = nullptr;
+			if (Manifest->TryGetObjectField(TEXT("registrationStatus"), ExistingRegistrationStatus) && ExistingRegistrationStatus && (*ExistingRegistrationStatus).IsValid())
+			{
+				RegistrationStatus = *ExistingRegistrationStatus;
+			}
+			else
+			{
+				RegistrationStatus = MakeShared<FJsonObject>();
+				Manifest->SetObjectField(TEXT("registrationStatus"), RegistrationStatus);
+			}
+			RegistrationStatus->SetStringField(TEXT("state"), State);
+			RegistrationStatus->SetStringField(TEXT("lastError"), LastError);
+			RegistrationStatus->SetStringField(TEXT("registeredAt"), State == TEXT("registered") ? FDateTime::UtcNow().ToIso8601() : FString());
+		}
+
+		IPythonScriptPlugin* TaskAtlasServiceLoadPythonScriptPlugin()
+		{
+			static const FName PythonScriptPluginModuleName(TEXT("PythonScriptPlugin"));
+			if (IPythonScriptPlugin* PythonPlugin = FModuleManager::GetModulePtr<IPythonScriptPlugin>(PythonScriptPluginModuleName))
+			{
+				return PythonPlugin;
+			}
+			return FModuleManager::LoadModulePtr<IPythonScriptPlugin>(PythonScriptPluginModuleName);
+		}
+
+		bool TaskAtlasServiceRunOfficialPythonJsonCommand(
+			const FString& Command,
+			TSharedPtr<FJsonObject>& OutResult,
+			FString& OutFailureReason)
+		{
+			OutResult.Reset();
+			OutFailureReason.Reset();
+
+			IPythonScriptPlugin* PythonPlugin = TaskAtlasServiceLoadPythonScriptPlugin();
+			if (!PythonPlugin)
+			{
+				OutFailureReason = TEXT("PythonScriptPlugin is not loaded.");
+				return false;
+			}
+			if (!PythonPlugin->IsPythonInitialized())
+			{
+				PythonPlugin->ForceEnablePythonAtRuntime();
+			}
+			if (!PythonPlugin->IsPythonAvailable() || !PythonPlugin->IsPythonInitialized())
+			{
+				OutFailureReason = TEXT("Python support is not available in the current editor session.");
+				return false;
+			}
+
+			FPythonCommandEx PythonCommand;
+			PythonCommand.Command = Command;
+			PythonCommand.ExecutionMode = EPythonCommandExecutionMode::ExecuteFile;
+			PythonCommand.FileExecutionScope = EPythonFileExecutionScope::Private;
+			PythonCommand.Flags = EPythonCommandFlags::Unattended;
+			const bool bExecuted = PythonPlugin->ExecPythonCommandEx(PythonCommand);
+
+			FString CapturedOutput = PythonCommand.CommandResult;
+			for (const FPythonLogOutputEntry& LogEntry : PythonCommand.LogOutput)
+			{
+				if (!LogEntry.Output.IsEmpty())
+				{
+					CapturedOutput += TEXT("\n") + LogEntry.Output;
+				}
+			}
+
+			const FString Begin = TEXT("__UEATELIER_OFFICIAL_JSON_BEGIN__");
+			const FString End = TEXT("__UEATELIER_OFFICIAL_JSON_END__");
+			const int32 BeginIndex = CapturedOutput.Find(Begin, ESearchCase::CaseSensitive);
+			if (BeginIndex == INDEX_NONE)
+			{
+				OutFailureReason = bExecuted
+					? FString(TEXT("Official toolset Python command did not emit a JSON sentinel."))
+					: FString(TEXT("Official toolset Python command failed before emitting a JSON sentinel."));
+				return false;
+			}
+			const int32 JsonStart = BeginIndex + Begin.Len();
+			const int32 EndIndex = CapturedOutput.Find(End, ESearchCase::CaseSensitive, ESearchDir::FromStart, JsonStart);
+			if (EndIndex == INDEX_NONE || EndIndex <= JsonStart)
+			{
+				OutFailureReason = TEXT("Official toolset Python command emitted an incomplete JSON sentinel.");
+				return false;
+			}
+
+			const FString ResultJson = CapturedOutput.Mid(JsonStart, EndIndex - JsonStart).TrimStartAndEnd();
+			const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResultJson);
+			if (!FJsonSerializer::Deserialize(Reader, OutResult) || !OutResult.IsValid())
+			{
+				OutFailureReason = TEXT("Official toolset Python command sentinel did not contain a JSON object.");
+				return false;
+			}
+			return bExecuted;
+		}
+
+		FString TaskAtlasServiceBuildOfficialRegisterCommand(
+			const FString& ModuleName,
+			const FString& SourcePath,
+			const FString& ClassName,
+			const FString& ToolsetName)
+		{
+			return FString::Printf(
+				TEXT("import importlib.util, json, sys, traceback\n")
+				TEXT("import unreal\n")
+				TEXT("_module_name = %s\n")
+				TEXT("_source_path = %s\n")
+				TEXT("_class_name = %s\n")
+				TEXT("_toolset_name = %s\n")
+				TEXT("_result = {\"ok\": False}\n")
+				TEXT("try:\n")
+				TEXT("    _old = sys.modules.get(_module_name)\n")
+				TEXT("    if _old is not None and hasattr(_old, \"unregister\"):\n")
+				TEXT("        _old.unregister()\n")
+				TEXT("    sys.modules.pop(_module_name, None)\n")
+				TEXT("    _spec = importlib.util.spec_from_file_location(_module_name, _source_path)\n")
+				TEXT("    if _spec is None or _spec.loader is None:\n")
+				TEXT("        raise RuntimeError(\"could not create module spec\")\n")
+				TEXT("    _module = importlib.util.module_from_spec(_spec)\n")
+				TEXT("    sys.modules[_module_name] = _module\n")
+				TEXT("    _spec.loader.exec_module(_module)\n")
+				TEXT("    _toolset_class = getattr(_module, _class_name, None)\n")
+				TEXT("    if _toolset_class is None:\n")
+				TEXT("        raise RuntimeError(\"generated toolset class not found\")\n")
+				TEXT("    _schema_json = unreal.ToolsetRegistry.get_toolset_json_schema(_toolset_class)\n")
+				TEXT("    _schema = json.loads(_schema_json) if _schema_json else {}\n")
+				TEXT("    _actual_toolset_name = _schema.get(\"name\") or _toolset_name\n")
+				TEXT("    _registered_ok = bool(_module.register())\n")
+				TEXT("    _is_registered = bool(unreal.ToolsetRegistry.is_toolset_registered(_actual_toolset_name))\n")
+				TEXT("    _result = {\"ok\": bool(_registered_ok and _is_registered), \"registered\": _is_registered, \"module\": _module_name, \"className\": _class_name, \"toolsetName\": _actual_toolset_name, \"expectedToolsetName\": _toolset_name}\n")
+				TEXT("except BaseException as exc:\n")
+				TEXT("    _result = {\"ok\": False, \"error\": str(exc), \"traceback\": traceback.format_exc(), \"module\": _module_name, \"className\": _class_name, \"toolsetName\": _toolset_name}\n")
+				TEXT("print(\"__UEATELIER_OFFICIAL_JSON_BEGIN__\" + json.dumps(_result, ensure_ascii=False, default=str) + \"__UEATELIER_OFFICIAL_JSON_END__\")\n"),
+				*TaskAtlasServicePythonStringLiteral(ModuleName),
+				*TaskAtlasServicePythonStringLiteral(SourcePath),
+				*TaskAtlasServicePythonStringLiteral(ClassName),
+				*TaskAtlasServicePythonStringLiteral(ToolsetName));
+		}
+
+		FString TaskAtlasServiceBuildOfficialUnregisterCommand(
+			const FString& ModuleName,
+			const FString& SourcePath,
+			const FString& ToolsetName)
+		{
+			return FString::Printf(
+				TEXT("import importlib.util, json, sys, traceback\n")
+				TEXT("import unreal\n")
+				TEXT("_module_name = %s\n")
+				TEXT("_source_path = %s\n")
+				TEXT("_toolset_name = %s\n")
+				TEXT("_result = {\"ok\": False}\n")
+				TEXT("try:\n")
+				TEXT("    _module = sys.modules.get(_module_name)\n")
+				TEXT("    if _module is None:\n")
+				TEXT("        _spec = importlib.util.spec_from_file_location(_module_name, _source_path)\n")
+				TEXT("        if _spec is None or _spec.loader is None:\n")
+				TEXT("            raise RuntimeError(\"could not create module spec\")\n")
+				TEXT("        _module = importlib.util.module_from_spec(_spec)\n")
+				TEXT("        sys.modules[_module_name] = _module\n")
+				TEXT("        _spec.loader.exec_module(_module)\n")
+				TEXT("    if hasattr(_module, \"unregister\"):\n")
+				TEXT("        _module.unregister()\n")
+				TEXT("    _is_registered = bool(unreal.ToolsetRegistry.is_toolset_registered(_toolset_name))\n")
+				TEXT("    sys.modules.pop(_module_name, None)\n")
+				TEXT("    _result = {\"ok\": not _is_registered, \"registered\": _is_registered, \"module\": _module_name, \"toolsetName\": _toolset_name}\n")
+				TEXT("except BaseException as exc:\n")
+				TEXT("    _result = {\"ok\": False, \"error\": str(exc), \"traceback\": traceback.format_exc(), \"module\": _module_name, \"toolsetName\": _toolset_name}\n")
+				TEXT("print(\"__UEATELIER_OFFICIAL_JSON_BEGIN__\" + json.dumps(_result, ensure_ascii=False, default=str) + \"__UEATELIER_OFFICIAL_JSON_END__\")\n"),
+				*TaskAtlasServicePythonStringLiteral(ModuleName),
+				*TaskAtlasServicePythonStringLiteral(SourcePath),
+				*TaskAtlasServicePythonStringLiteral(ToolsetName));
+		}
+#endif
+
 		void TaskAtlasServiceCollectReloadRejections(
 			const UserRegistry::FReloadResult& ReloadResult,
 			const FString& TargetToolName,
@@ -2105,6 +2500,272 @@ namespace UnrealMcp::TaskAtlasService
 	void FailNextPromoteRefreshForTests()
 	{
 		bTaskAtlasServiceFailNextKnowledgeRefreshForTests = true;
+	}
+#endif
+
+#if UNREALMCP_HAS_OFFICIAL_TOOLSETS
+	FString OfficialToolsetDraftsRootDir()
+	{
+		return TaskAtlasServiceOfficialDraftsRootDir();
+	}
+
+	FOfficialToolsetDraftResult GenerateOfficialToolsetDraft(const FOfficialToolsetDraftRequest& Req)
+	{
+		check(IsInGameThread());
+		FOfficialToolsetDraftResult Result;
+		const FString ToolId = Req.ToolId.TrimStartAndEnd().IsEmpty()
+			? MakeAtlasToolId(Req.Title, Req.TaskId)
+			: Req.ToolId.TrimStartAndEnd();
+
+		FScopeLock MutationGuard(&GTaskAtlasServiceMutationLock);
+
+		const FString DraftRoot = TaskAtlasServiceOfficialDraftsRootDir();
+		const FString CanonicalDraftRoot = TaskAtlasServiceNormalizeAbsolutePath(DraftRoot);
+		const FString TargetDir = TaskAtlasServiceNormalizeAbsolutePath(FPaths::Combine(CanonicalDraftRoot, ToolId));
+		if (!TaskAtlasServiceIsSafeDirectoryName(ToolId) || !TaskAtlasServicePathEqualsOrChild(TargetDir, CanonicalDraftRoot))
+		{
+			Result.ErrorCode = TEXT("invalid_name");
+			Result.ErrorMessage = TEXT("Refused to write official toolset draft outside Saved/UnrealMcp/OfficialToolsetDrafts.");
+			return Result;
+		}
+		if (IFileManager::Get().DirectoryExists(*TargetDir))
+		{
+			Result.ErrorCode = TEXT("collision_existing_target");
+			Result.ErrorMessage = FString::Printf(TEXT("Official toolset draft target already exists: %s"), *TargetDir);
+			return Result;
+		}
+
+		const FString StagingDir = TaskAtlasServiceNormalizeAbsolutePath(FPaths::Combine(
+			CanonicalDraftRoot,
+			FString::Printf(TEXT("__staging_%s"), *FGuid::NewGuid().ToString(EGuidFormats::Short))));
+		Result.StagingDir = StagingDir;
+
+		TaskAtlasComposite::FOfficialToolsetBuildProduct Product;
+		FString FailureReason;
+		const TSet<FString> VisibleCoreToolNames = Req.VisibleCoreToolNames.Num() > 0
+			? Req.VisibleCoreToolNames
+			: TaskAtlasServiceVisibleCoreToolNames();
+		if (!TaskAtlasComposite::BuildOfficialToolsetFiles(
+			ToolId,
+			Req.Title,
+			Req.Description,
+			Req.TaskId,
+			Req.ReplayEligibility,
+			Req.ReplayUnavailableReason,
+			Req.CriticalPath,
+			Req.StepRefs,
+			VisibleCoreToolNames,
+			Product,
+			FailureReason))
+		{
+			Result.ErrorCode = TEXT("official_build_failed");
+			Result.ErrorMessage = FailureReason;
+			return Result;
+		}
+
+		Result.ModuleName = Product.ModuleName;
+		Result.ClassName = Product.ClassName;
+		Result.ToolsetName = Product.ToolsetName;
+		Result.MainPySha256 = Product.MainPySha256;
+		for (const TaskAtlasComposite::FOfficialToolsetToolInfo& Tool : Product.Tools)
+		{
+			Result.ToolNames.Add(Tool.Name);
+		}
+
+		const FString StagedSourcePath = FPaths::Combine(StagingDir, Product.ModuleName + TEXT(".py"));
+		const FString StagedManifestPath = FPaths::Combine(StagingDir, TEXT("manifest.json"));
+		const FString FinalSourcePath = FPaths::Combine(TargetDir, Product.ModuleName + TEXT(".py"));
+		const FString FinalManifestPath = FPaths::Combine(TargetDir, TEXT("manifest.json"));
+
+		TSharedPtr<FJsonObject> Manifest;
+		{
+			const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Product.ManifestJson);
+			if (!FJsonSerializer::Deserialize(Reader, Manifest) || !Manifest.IsValid())
+			{
+				Result.ErrorCode = TEXT("manifest_parse_failed");
+				Result.ErrorMessage = TEXT("Generated official toolset manifest did not parse.");
+				return Result;
+			}
+		}
+		TaskAtlasServiceUpdateOfficialManifestPaths(Manifest, FinalSourcePath, FinalSourcePath, TargetDir);
+
+		if (!IFileManager::Get().MakeDirectory(*StagingDir, true)
+			|| !FFileHelper::SaveStringToFile(Product.MainPy, *StagedSourcePath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+		{
+			IFileManager::Get().DeleteDirectory(*StagingDir, false, true);
+			Result.ErrorCode = TEXT("staging_write_failed");
+			Result.ErrorMessage = TEXT("Failed to write staged official toolset Python module.");
+			return Result;
+		}
+		if (!TaskAtlasServiceWriteJsonObject(Manifest, StagedManifestPath))
+		{
+			IFileManager::Get().DeleteDirectory(*StagingDir, false, true);
+			Result.ErrorCode = TEXT("manifest_write_failed");
+			Result.ErrorMessage = TEXT("Failed to write staged official toolset manifest.");
+			return Result;
+		}
+
+		TArray<FString> ValidatorIssues;
+		if (!TaskAtlasServiceRunOfficialValidator(StagedSourcePath, ValidatorIssues, FailureReason))
+		{
+			Result.ValidatorIssues = ValidatorIssues;
+			TaskAtlasServiceUpdateOfficialValidatorStatus(Manifest, false, ValidatorIssues);
+			TaskAtlasServiceWriteJsonObject(Manifest, StagedManifestPath);
+			TSharedPtr<FJsonObject> Diagnostic = MakeShared<FJsonObject>();
+			Diagnostic->SetStringField(TEXT("toolsetName"), Product.ToolsetName);
+			Diagnostic->SetStringField(TEXT("stagingDir"), StagingDir);
+			Diagnostic->SetStringField(TEXT("sourcePath"), StagedSourcePath);
+			Diagnostic->SetArrayField(TEXT("validatorIssues"), TaskAtlasServiceMakeIssueValues(ValidatorIssues));
+			Result.FailureDiagnosticPath = TaskAtlasServiceWriteOperationDiagnostic(TEXT("official-validator"), ToolId, Diagnostic);
+			IFileManager::Get().DeleteDirectory(*StagingDir, false, true);
+			Result.ErrorCode = TEXT("validator_rejected");
+			Result.ErrorMessage = FailureReason;
+			return Result;
+		}
+		TaskAtlasServiceUpdateOfficialValidatorStatus(Manifest, true, ValidatorIssues);
+		if (!TaskAtlasServiceWriteJsonObject(Manifest, StagedManifestPath))
+		{
+			IFileManager::Get().DeleteDirectory(*StagingDir, false, true);
+			Result.ErrorCode = TEXT("manifest_write_failed");
+			Result.ErrorMessage = TEXT("Failed to write validated official toolset manifest.");
+			return Result;
+		}
+
+		if (!IFileManager::Get().Move(*TargetDir, *StagingDir, false, true))
+		{
+			IFileManager::Get().DeleteDirectory(*StagingDir, false, true);
+			Result.ErrorCode = TEXT("staging_rename_failed");
+			Result.ErrorMessage = FString::Printf(TEXT("Failed to rename official staging directory '%s' to '%s'."), *StagingDir, *TargetDir);
+			return Result;
+		}
+
+		Result.GeneratedDir = TargetDir;
+		Result.ModulePath = FinalSourcePath;
+		Result.ManifestPath = FinalManifestPath;
+		Result.StagingDir.Reset();
+
+		TSharedPtr<FJsonObject> RegisterResult;
+		const bool bPythonCommandOk = TaskAtlasServiceRunOfficialPythonJsonCommand(
+			TaskAtlasServiceBuildOfficialRegisterCommand(Product.ModuleName, FinalSourcePath, Product.ClassName, Product.ToolsetName),
+			RegisterResult,
+			FailureReason);
+		bool bRegistered = false;
+		if (RegisterResult.IsValid())
+		{
+			RegisterResult->TryGetBoolField(TEXT("ok"), bRegistered);
+			FString ActualToolsetName;
+			if (RegisterResult->TryGetStringField(TEXT("toolsetName"), ActualToolsetName) && !ActualToolsetName.TrimStartAndEnd().IsEmpty())
+			{
+				Product.ToolsetName = ActualToolsetName.TrimStartAndEnd();
+				Result.ToolsetName = Product.ToolsetName;
+				Manifest->SetStringField(TEXT("toolsetName"), Product.ToolsetName);
+			}
+		}
+		if (!bPythonCommandOk || !bRegistered)
+		{
+			FString LastError = FailureReason;
+			if (RegisterResult.IsValid())
+			{
+				RegisterResult->TryGetStringField(TEXT("error"), LastError);
+			}
+			TaskAtlasServiceUpdateOfficialRegistrationStatus(Manifest, TEXT("rejected"), LastError);
+			TaskAtlasServiceWriteJsonObject(Manifest, FinalManifestPath);
+
+			TSharedPtr<FJsonObject> Diagnostic = MakeShared<FJsonObject>();
+			Diagnostic->SetStringField(TEXT("toolsetName"), Product.ToolsetName);
+			Diagnostic->SetStringField(TEXT("generatedDir"), TargetDir);
+			Diagnostic->SetStringField(TEXT("sourcePath"), FinalSourcePath);
+			Diagnostic->SetStringField(TEXT("lastError"), LastError);
+			if (RegisterResult.IsValid())
+			{
+				Diagnostic->SetObjectField(TEXT("registerResult"), RegisterResult);
+			}
+			Result.FailureDiagnosticPath = TaskAtlasServiceWriteOperationDiagnostic(TEXT("official-register"), ToolId, Diagnostic);
+			TSharedPtr<FJsonObject> UnregisterIgnored;
+			FString UnregisterFailure;
+			TaskAtlasServiceRunOfficialPythonJsonCommand(
+				TaskAtlasServiceBuildOfficialUnregisterCommand(Product.ModuleName, FinalSourcePath, Product.ToolsetName),
+				UnregisterIgnored,
+				UnregisterFailure);
+			IFileManager::Get().DeleteDirectory(*TargetDir, false, true);
+			Result.ErrorCode = TEXT("registration_rejected");
+			Result.ErrorMessage = LastError.IsEmpty() ? FString(TEXT("Official toolset registration failed.")) : LastError;
+			return Result;
+		}
+
+		TaskAtlasServiceUpdateOfficialRegistrationStatus(Manifest, TEXT("registered"), FString());
+		if (!TaskAtlasServiceWriteJsonObject(Manifest, FinalManifestPath))
+		{
+			Result.ErrorCode = TEXT("manifest_write_failed");
+			Result.ErrorMessage = TEXT("Official toolset registered, but final manifest write failed.");
+			return Result;
+		}
+		Result.ManifestJson = TaskAtlasServiceJsonToPrettyString(Manifest);
+		Result.ValidatorIssues = ValidatorIssues;
+		Result.bSucceeded = true;
+		return Result;
+	}
+
+	FOfficialToolsetRollbackResult RollbackOfficialToolsetDraft(const FString& ToolsetName, const FString& ModuleName, const FString& GeneratedDir)
+	{
+		check(IsInGameThread());
+		FOfficialToolsetRollbackResult Result;
+		const FString NormalizedDir = TaskAtlasServiceNormalizeAbsolutePath(GeneratedDir);
+		const FString DraftRoot = TaskAtlasServiceOfficialDraftsRootDir();
+		if (!TaskAtlasServicePathEqualsOrChild(NormalizedDir, DraftRoot))
+		{
+			Result.ErrorCode = TEXT("path_unsafe");
+			Result.ErrorMessage = TEXT("Refused to roll back official toolset draft outside Saved/UnrealMcp/OfficialToolsetDrafts.");
+			return Result;
+		}
+
+		const FString SourcePath = FPaths::Combine(NormalizedDir, ModuleName + TEXT(".py"));
+		const FString ManifestPath = FPaths::Combine(NormalizedDir, TEXT("manifest.json"));
+		TSharedPtr<FJsonObject> PythonResult;
+		FString FailureReason;
+		const bool bPythonCommandOk = TaskAtlasServiceRunOfficialPythonJsonCommand(
+			TaskAtlasServiceBuildOfficialUnregisterCommand(ModuleName, SourcePath, ToolsetName),
+			PythonResult,
+			FailureReason);
+		bool bUnregistered = false;
+		if (PythonResult.IsValid())
+		{
+			PythonResult->TryGetBoolField(TEXT("ok"), bUnregistered);
+		}
+
+		TSharedPtr<FJsonObject> Manifest;
+		if (TaskAtlasServiceLoadJsonObject(ManifestPath, Manifest))
+		{
+			FString LastError = FailureReason;
+			if (!bPythonCommandOk || !bUnregistered)
+			{
+				if (PythonResult.IsValid())
+				{
+					PythonResult->TryGetStringField(TEXT("error"), LastError);
+				}
+			}
+			TaskAtlasServiceUpdateOfficialRegistrationStatus(
+				Manifest,
+				bPythonCommandOk && bUnregistered ? FString(TEXT("unregistered")) : FString(TEXT("unregister_failed")),
+				LastError);
+			Result.UpdatedManifestJson = TaskAtlasServiceJsonToPrettyString(Manifest);
+			TaskAtlasServiceWriteJsonObject(Manifest, ManifestPath);
+		}
+
+		if (!bPythonCommandOk || !bUnregistered)
+		{
+			Result.ErrorCode = TEXT("unregister_failed");
+			Result.ErrorMessage = FailureReason.IsEmpty() ? FString(TEXT("Official toolset unregister failed.")) : FailureReason;
+			return Result;
+		}
+		if (!IFileManager::Get().DeleteDirectory(*NormalizedDir, false, true))
+		{
+			Result.ErrorCode = TEXT("filesystem_delete_failed");
+			Result.ErrorMessage = FString::Printf(TEXT("Failed to delete official toolset draft directory: %s"), *NormalizedDir);
+			return Result;
+		}
+		Result.bSucceeded = true;
+		return Result;
 	}
 #endif
 

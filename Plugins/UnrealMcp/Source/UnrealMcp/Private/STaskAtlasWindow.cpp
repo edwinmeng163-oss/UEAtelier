@@ -32,6 +32,8 @@
 
 namespace UnrealMcp::TaskAtlasComposite
 {
+	FString ComputePythonHandlerSha256(const FString& MainPy);
+
 	namespace
 	{
 		struct FCompositeStep
@@ -189,9 +191,9 @@ namespace UnrealMcp::TaskAtlasComposite
 			return FMath::TruncToInt(Ordinal);
 		}
 
-		TSharedPtr<FJsonObject> TaskAtlasCompositeStepToJson(const FCompositeStep& Step)
-		{
-			TSharedPtr<FJsonObject> StepObject = MakeShared<FJsonObject>();
+			TSharedPtr<FJsonObject> TaskAtlasCompositeStepToJson(const FCompositeStep& Step)
+			{
+				TSharedPtr<FJsonObject> StepObject = MakeShared<FJsonObject>();
 			StepObject->SetNumberField(TEXT("ordinal"), Step.Ordinal);
 			StepObject->SetStringField(TEXT("tool"), Step.ToolName);
 			if (!Step.EventId.IsEmpty())
@@ -216,8 +218,318 @@ namespace UnrealMcp::TaskAtlasComposite
 			{
 				StepObject->SetStringField(TEXT("captureReadError"), Step.CaptureReadError);
 			}
-			return StepObject;
+				return StepObject;
+			}
+
+	#if UNREALMCP_HAS_OFFICIAL_TOOLSETS
+			const TCHAR* OfficialToolsetVersion()
+			{
+				return TEXT("0.1");
 		}
+
+		bool TaskAtlasCompositeIsPythonKeyword(const FString& Identifier)
+		{
+			static const TSet<FString> Keywords = {
+				TEXT("False"), TEXT("None"), TEXT("True"), TEXT("and"), TEXT("as"), TEXT("assert"),
+				TEXT("async"), TEXT("await"), TEXT("break"), TEXT("class"), TEXT("continue"), TEXT("def"),
+				TEXT("del"), TEXT("elif"), TEXT("else"), TEXT("except"), TEXT("finally"), TEXT("for"),
+				TEXT("from"), TEXT("global"), TEXT("if"), TEXT("import"), TEXT("in"), TEXT("is"),
+				TEXT("lambda"), TEXT("nonlocal"), TEXT("not"), TEXT("or"), TEXT("pass"), TEXT("raise"),
+				TEXT("return"), TEXT("try"), TEXT("while"), TEXT("with"), TEXT("yield")
+			};
+			return Keywords.Contains(Identifier);
+		}
+
+		FString TaskAtlasCompositeSanitizePythonIdentifier(const FString& Value, const FString& Fallback, bool bLowercase)
+		{
+			FString Result;
+			for (const TCHAR Character : Value.TrimStartAndEnd())
+			{
+				const bool bAlpha = FChar::IsAlpha(Character);
+				const bool bDigit = FChar::IsDigit(Character);
+				if (bAlpha || bDigit)
+				{
+					Result.AppendChar(bLowercase ? FChar::ToLower(Character) : Character);
+				}
+				else if (!Result.EndsWith(TEXT("_")))
+				{
+					Result.AppendChar(TEXT('_'));
+				}
+			}
+			while (Result.StartsWith(TEXT("_")))
+			{
+				Result.RightChopInline(1);
+			}
+			while (Result.EndsWith(TEXT("_")))
+			{
+				Result.LeftChopInline(1);
+			}
+			if (Result.IsEmpty())
+			{
+				Result = Fallback;
+			}
+			if (Result.IsEmpty() || FChar::IsDigit(Result[0]) || TaskAtlasCompositeIsPythonKeyword(Result))
+			{
+				Result = TEXT("arg_") + Result;
+			}
+			return Result;
+		}
+
+		FString TaskAtlasCompositeMakeClassName(const FString& ToolId)
+		{
+			TArray<FString> Parts;
+			ToolId.ParseIntoArray(Parts, TEXT("_"), true);
+			FString ClassName = TEXT("UEAtelier");
+			for (FString Part : Parts)
+			{
+				Part = TaskAtlasCompositeSanitizePythonIdentifier(Part, FString(), true);
+				if (Part.IsEmpty())
+				{
+					continue;
+				}
+				Part[0] = FChar::ToUpper(Part[0]);
+				ClassName += Part;
+			}
+			ClassName += TEXT("Toolset");
+			return ClassName;
+		}
+
+		FString TaskAtlasCompositeMakeOfficialToolsetName(const FString& ToolId, const FString& ModuleName, const FString& ClassName)
+		{
+			return FString::Printf(
+				TEXT("Temp.UnrealMcp.OfficialToolsetDrafts.%s.%s.%s"),
+				*ToolId,
+				*ModuleName,
+				*ClassName);
+		}
+
+			FString TaskAtlasCompositeMakeUniqueIdentifier(
+				const FString& BaseName,
+				const FString& Fallback,
+				TSet<FString>& UsedNames)
+		{
+			const FString Sanitized = TaskAtlasCompositeSanitizePythonIdentifier(BaseName, Fallback, true);
+			FString Candidate = Sanitized;
+			int32 Suffix = 2;
+			while (UsedNames.Contains(Candidate))
+			{
+				Candidate = FString::Printf(TEXT("%s_%d"), *Sanitized, Suffix++);
+			}
+			UsedNames.Add(Candidate);
+			return Candidate;
+		}
+
+		FString TaskAtlasCompositeJsonValueToPythonLiteral(const TSharedPtr<FJsonValue>& Value);
+
+		FString TaskAtlasCompositeJsonObjectToPythonLiteral(const TSharedPtr<FJsonObject>& Object)
+		{
+			if (!Object.IsValid())
+			{
+				return TEXT("{}");
+			}
+
+			TArray<FString> Keys;
+			UnrealMcp::Compat::GetJsonObjectKeys(*Object, Keys);
+			Keys.Sort();
+
+			TArray<FString> Entries;
+			for (const FString& Key : Keys)
+			{
+				const TSharedPtr<FJsonValue>* FoundValue = UnrealMcp::Compat::FindJsonValue(*Object, Key);
+				if (!FoundValue || !(*FoundValue).IsValid())
+				{
+					continue;
+				}
+				Entries.Add(FString::Printf(
+					TEXT("%s: %s"),
+					*TaskAtlasCompositePythonQuote(Key),
+					*TaskAtlasCompositeJsonValueToPythonLiteral(*FoundValue)));
+			}
+			return TEXT("{") + FString::Join(Entries, TEXT(", ")) + TEXT("}");
+		}
+
+		FString TaskAtlasCompositeJsonValueToPythonLiteral(const TSharedPtr<FJsonValue>& Value)
+		{
+			if (!Value.IsValid())
+			{
+				return TEXT("None");
+			}
+
+			switch (Value->Type)
+			{
+			case EJson::String:
+				return TaskAtlasCompositePythonQuote(Value->AsString());
+			case EJson::Number:
+			{
+				const double Number = Value->AsNumber();
+				const int64 IntegerValue = FMath::RoundToInt64(Number);
+				if (FMath::IsNearlyEqual(Number, static_cast<double>(IntegerValue)))
+				{
+					return FString::Printf(TEXT("%lld"), IntegerValue);
+				}
+				return FString::SanitizeFloat(Number);
+			}
+			case EJson::Boolean:
+				return Value->AsBool() ? FString(TEXT("True")) : FString(TEXT("False"));
+			case EJson::Array:
+			{
+				TArray<FString> Items;
+				for (const TSharedPtr<FJsonValue>& Item : Value->AsArray())
+				{
+					Items.Add(TaskAtlasCompositeJsonValueToPythonLiteral(Item));
+				}
+				return TEXT("[") + FString::Join(Items, TEXT(", ")) + TEXT("]");
+			}
+			case EJson::Object:
+				return TaskAtlasCompositeJsonObjectToPythonLiteral(Value->AsObject());
+			case EJson::Null:
+			default:
+				return TEXT("None");
+			}
+		}
+
+		FString TaskAtlasCompositeTypeForParamValue(const TSharedPtr<FJsonValue>& Value)
+		{
+			if (!Value.IsValid())
+			{
+				return FString();
+			}
+			if (Value->Type == EJson::String)
+			{
+				return TEXT("str");
+			}
+			if (Value->Type == EJson::Boolean)
+			{
+				return TEXT("bool");
+			}
+			if (Value->Type == EJson::Number)
+			{
+				const double Number = Value->AsNumber();
+				return FMath::IsNearlyEqual(Number, static_cast<double>(FMath::RoundToInt64(Number)))
+					? FString(TEXT("int"))
+					: FString(TEXT("float"));
+			}
+			return FString();
+		}
+
+		TSharedPtr<FJsonObject> TaskAtlasCompositeCloneObject(const TSharedPtr<FJsonObject>& Source)
+		{
+			TSharedPtr<FJsonObject> Clone = MakeShared<FJsonObject>();
+			if (Source.IsValid())
+			{
+				Clone->Values = Source->Values;
+			}
+			return Clone;
+		}
+
+		TSharedPtr<FJsonObject> TaskAtlasCompositeParamTypesToJson(const TMap<FString, FString>& ParamSchemaTypes)
+		{
+			TSharedPtr<FJsonObject> Object = MakeShared<FJsonObject>();
+			TArray<FString> Names;
+			ParamSchemaTypes.GetKeys(Names);
+			Names.Sort();
+			for (const FString& Name : Names)
+			{
+				if (const FString* Type = ParamSchemaTypes.Find(Name))
+				{
+					Object->SetStringField(Name, *Type);
+				}
+			}
+			return Object;
+		}
+
+		FString TaskAtlasCompositeMakeSchemaHash(const TArray<FOfficialToolsetToolInfo>& Tools)
+		{
+			TArray<FString> Lines;
+			for (const FOfficialToolsetToolInfo& Tool : Tools)
+			{
+				TArray<FString> ParamNames;
+				Tool.ParamSchemaTypes.GetKeys(ParamNames);
+				ParamNames.Sort();
+
+				TArray<FString> Params;
+				for (const FString& ParamName : ParamNames)
+				{
+					const FString* ParamType = Tool.ParamSchemaTypes.Find(ParamName);
+					Params.Add(FString::Printf(TEXT("%s:%s"), *ParamName, ParamType ? **ParamType : TEXT("")));
+				}
+				Lines.Add(FString::Printf(
+					TEXT("%s|%s|%s|%s"),
+					*Tool.Name,
+					*Tool.GovernedToolId,
+					*Tool.ReturnType,
+					*FString::Join(Params, TEXT(","))));
+			}
+			return ComputePythonHandlerSha256(FString::Join(Lines, TEXT("\n")));
+		}
+
+		TArray<TSharedPtr<FJsonValue>> TaskAtlasCompositeMakeTaskIdArray(const FString& TaskId)
+		{
+			TArray<TSharedPtr<FJsonValue>> Values;
+			if (!TaskId.TrimStartAndEnd().IsEmpty())
+			{
+				Values.Add(MakeShared<FJsonValueString>(TaskId.TrimStartAndEnd()));
+			}
+			return Values;
+		}
+
+		FString TaskAtlasCompositeBuildOfficialManifest(
+			const FString& ToolsetName,
+			const FString& ClassName,
+			const FString& ModuleName,
+			const FString& TaskId,
+			const FString& SchemaHash,
+			const TArray<FOfficialToolsetToolInfo>& Tools)
+		{
+			TSharedPtr<FJsonObject> Manifest = MakeShared<FJsonObject>();
+			Manifest->SetStringField(TEXT("toolsetName"), ToolsetName);
+			Manifest->SetStringField(TEXT("className"), ClassName);
+			Manifest->SetStringField(TEXT("modulePath"), ModuleName + TEXT(".py"));
+			Manifest->SetStringField(TEXT("sourcePath"), FString());
+
+			TArray<TSharedPtr<FJsonValue>> ToolValues;
+			for (const FOfficialToolsetToolInfo& Tool : Tools)
+			{
+				TSharedPtr<FJsonObject> ToolObject = MakeShared<FJsonObject>();
+				ToolObject->SetStringField(TEXT("name"), Tool.Name);
+				ToolObject->SetObjectField(TEXT("paramSchemaTypes"), TaskAtlasCompositeParamTypesToJson(Tool.ParamSchemaTypes));
+				ToolObject->SetStringField(TEXT("returnType"), Tool.ReturnType);
+				ToolObject->SetStringField(TEXT("governedToolId"), Tool.GovernedToolId);
+				ToolObject->SetObjectField(TEXT("argsTemplate"), TaskAtlasCompositeCloneObject(Tool.ArgsTemplate));
+				ToolValues.Add(MakeShared<FJsonValueObject>(ToolObject));
+			}
+			Manifest->SetArrayField(TEXT("toolNames"), ToolValues);
+			Manifest->SetStringField(TEXT("schemaHash"), SchemaHash);
+			Manifest->SetArrayField(TEXT("sourceTaskAtlasTaskIds"), TaskAtlasCompositeMakeTaskIdArray(TaskId));
+
+			TSharedPtr<FJsonObject> ValidatorStatus = MakeShared<FJsonObject>();
+			ValidatorStatus->SetBoolField(TEXT("passed"), false);
+			ValidatorStatus->SetArrayField(TEXT("issues"), TArray<TSharedPtr<FJsonValue>>());
+			ValidatorStatus->SetStringField(TEXT("validatedAt"), FString());
+			Manifest->SetObjectField(TEXT("validatorStatus"), ValidatorStatus);
+
+			TSharedPtr<FJsonObject> RegistrationStatus = MakeShared<FJsonObject>();
+			RegistrationStatus->SetStringField(TEXT("state"), TEXT("unregistered"));
+			RegistrationStatus->SetStringField(TEXT("registeredAt"), FString());
+			RegistrationStatus->SetStringField(TEXT("lastError"), FString());
+			Manifest->SetObjectField(TEXT("registrationStatus"), RegistrationStatus);
+
+			TSharedPtr<FJsonObject> SmokeResult = MakeShared<FJsonObject>();
+			SmokeResult->SetStringField(TEXT("serverEndpoint"), FString());
+			SmokeResult->SetBoolField(TEXT("listedInToolsList"), false);
+			SmokeResult->SetObjectField(TEXT("sampleCall"), MakeShared<FJsonObject>());
+			SmokeResult->SetStringField(TEXT("smokedAt"), FString());
+			Manifest->SetObjectField(TEXT("smokeResult"), SmokeResult);
+
+			TSharedPtr<FJsonObject> Rollback = MakeShared<FJsonObject>();
+			Rollback->SetStringField(TEXT("unregisterEntryPoint"), ModuleName + TEXT(".unregister"));
+			Rollback->SetStringField(TEXT("deletePath"), FString());
+			Rollback->SetStringField(TEXT("reloadPackage"), ModuleName);
+			Manifest->SetObjectField(TEXT("rollback"), Rollback);
+			Manifest->SetStringField(TEXT("version"), OfficialToolsetVersion());
+			return TaskAtlasCompositeJsonToString(Manifest);
+		}
+#endif
 		}
 
 	FString NormalizeReplayEligibility(const FString& ReplayEligibility)
@@ -550,6 +862,224 @@ namespace UnrealMcp::TaskAtlasComposite
 		OutToolJson = TaskAtlasCompositeJsonToString(ToolJson);
 		return true;
 	}
+
+#if UNREALMCP_HAS_OFFICIAL_TOOLSETS
+	bool BuildOfficialToolsetFiles(
+		const FString& ToolId,
+		const FString& Title,
+		const FString& Description,
+		const FString& TaskId,
+		const FString& ReplayEligibility,
+		const FString& ReplayUnavailableReason,
+		const TArray<FString>& CriticalPath,
+		const TArray<TSharedPtr<FJsonValue>>& StepRefs,
+		const TSet<FString>& VisibleCoreToolNames,
+		FOfficialToolsetBuildProduct& OutProduct,
+		FString& OutFailureReason)
+	{
+		(void)ReplayEligibility;
+		(void)ReplayUnavailableReason;
+		OutProduct = FOfficialToolsetBuildProduct();
+		OutFailureReason.Reset();
+
+		if (!TaskAtlasCompositeIsValidToolId(ToolId, OutFailureReason))
+		{
+			return false;
+		}
+
+		TArray<FCompositeStep> Steps;
+		Steps.Reserve(StepRefs.Num() > 0 ? StepRefs.Num() : CriticalPath.Num());
+		for (int32 Index = 0; Index < StepRefs.Num(); ++Index)
+		{
+			const TSharedPtr<FJsonValue>& StepValue = StepRefs[Index];
+			const TSharedPtr<FJsonObject> StepObject = StepValue.IsValid() && StepValue->Type == EJson::Object ? StepValue->AsObject() : nullptr;
+			if (!StepObject.IsValid())
+			{
+				continue;
+			}
+
+			FCompositeStep Step;
+			Step.bFromStepRef = true;
+			Step.Ordinal = TaskAtlasCompositeGetOrdinalField(StepObject, Index);
+			Step.ToolName = TaskAtlasCompositeGetStringField(StepObject, TEXT("tool"));
+			Step.EventId = TaskAtlasCompositeGetStringField(StepObject, TEXT("eventId"));
+			Step.CaptureStatus = TaskAtlasCompositeGetStringField(StepObject, TEXT("captureStatus"));
+			Step.CaptureRef = TaskAtlasCompositeGetStringField(StepObject, TEXT("captureRef"));
+			Step.PolicyClassAtCapture = TaskAtlasCompositeGetStringField(StepObject, TEXT("policyClassAtCapture"));
+			if (!Step.ToolName.StartsWith(TEXT("unreal."), ESearchCase::CaseSensitive)
+				|| !VisibleCoreToolNames.Contains(Step.ToolName))
+			{
+				continue;
+			}
+
+			TaskAtlasCompositeReadCapturedArgs(Step);
+			Steps.Add(Step);
+		}
+
+		TSet<FString> SeenFallbackTools;
+		if (Steps.Num() == 0)
+		{
+			for (const FString& RawToolName : CriticalPath)
+			{
+				const FString ToolName = RawToolName.TrimStartAndEnd();
+				if (!ToolName.StartsWith(TEXT("unreal."), ESearchCase::CaseSensitive)
+					|| !VisibleCoreToolNames.Contains(ToolName)
+					|| SeenFallbackTools.Contains(ToolName))
+				{
+					continue;
+				}
+
+				SeenFallbackTools.Add(ToolName);
+				FCompositeStep Step;
+				Step.ToolName = ToolName;
+				Step.Ordinal = Steps.Num();
+				Step.CaptureReadStatus = TEXT("placeholder");
+				Steps.Add(Step);
+			}
+		}
+
+		if (Steps.Num() == 0)
+		{
+			OutFailureReason = TEXT("Official Toolset generation requires at least one visible core unreal.* tool in the workflow critical path.");
+			return false;
+		}
+
+		OutProduct.ModuleName = TaskAtlasCompositeSanitizePythonIdentifier(ToolId + TEXT("_official_toolset"), TEXT("ueatelier_official_toolset"), true);
+		OutProduct.ClassName = TaskAtlasCompositeMakeClassName(ToolId);
+		OutProduct.ToolsetName = TaskAtlasCompositeMakeOfficialToolsetName(ToolId, OutProduct.ModuleName, OutProduct.ClassName);
+
+		const FString ToolsetDescription = Description.TrimStartAndEnd().IsEmpty()
+			? FString::Printf(TEXT("Governed UEAtelier official toolset generated from Task Atlas task %s."), *TaskId.TrimStartAndEnd())
+			: Description.TrimStartAndEnd();
+
+		OutProduct.MainPy += TEXT("\"\"\"Generated UEAtelier official ToolsetRegistry wrapper.\"\"\"\n\n");
+		OutProduct.MainPy += TEXT("from __future__ import annotations\n\n");
+		OutProduct.MainPy += TEXT("import json\n\n");
+		OutProduct.MainPy += TEXT("from toolset_registry.registration import Registration\n");
+		OutProduct.MainPy += TEXT("import toolset_registry\n");
+		OutProduct.MainPy += TEXT("import unreal\n\n\n");
+		OutProduct.MainPy += TEXT("@unreal.uclass()\n");
+		OutProduct.MainPy += FString::Printf(TEXT("class %s(unreal.ToolsetDefinition):\n"), *OutProduct.ClassName);
+		OutProduct.MainPy += FString::Printf(TEXT("    \"\"\"%s\"\"\"\n"), *ToolsetDescription.ReplaceCharWithEscapedChar());
+
+		TSet<FString> UsedMethodNames;
+		for (int32 Index = 0; Index < Steps.Num(); ++Index)
+		{
+			const FCompositeStep& Step = Steps[Index];
+			const FString MethodBase = FString::Printf(TEXT("step%d_%s"), Index, *Step.ToolName.RightChop(7));
+			const FString MethodName = TaskAtlasCompositeMakeUniqueIdentifier(MethodBase, FString::Printf(TEXT("step%d_tool"), Index), UsedMethodNames);
+			TSharedPtr<FJsonObject> ArgsTemplate = TaskAtlasCompositeCloneObject(Step.CapturedArgs);
+
+			TMap<FString, FString> ParamSchemaTypes;
+			TMap<FString, FString> RawKeyToParamName;
+			TSet<FString> UsedParamNames;
+			TArray<FString> RawArgKeys;
+			UnrealMcp::Compat::GetJsonObjectKeys(*ArgsTemplate, RawArgKeys);
+			RawArgKeys.Sort();
+			for (const FString& RawKey : RawArgKeys)
+			{
+				const TSharedPtr<FJsonValue>* Value = UnrealMcp::Compat::FindJsonValue(*ArgsTemplate, RawKey);
+				const FString ParamType = TaskAtlasCompositeTypeForParamValue(Value ? *Value : nullptr);
+				if (ParamType.IsEmpty())
+				{
+					continue;
+				}
+
+				const FString ParamName = TaskAtlasCompositeMakeUniqueIdentifier(RawKey, TEXT("arg"), UsedParamNames);
+				ParamSchemaTypes.Add(ParamName, ParamType);
+				RawKeyToParamName.Add(RawKey, ParamName);
+			}
+
+			TArray<FString> ParamDecls;
+			for (const FString& RawKey : RawArgKeys)
+			{
+				const FString* ParamName = RawKeyToParamName.Find(RawKey);
+				if (!ParamName)
+				{
+					continue;
+				}
+				const TSharedPtr<FJsonValue>* Value = UnrealMcp::Compat::FindJsonValue(*ArgsTemplate, RawKey);
+				const FString* ParamType = ParamSchemaTypes.Find(*ParamName);
+				ParamDecls.Add(FString::Printf(
+					TEXT("%s: %s = %s"),
+					**ParamName,
+					ParamType ? **ParamType : TEXT("str"),
+					*TaskAtlasCompositeJsonValueToPythonLiteral(Value ? *Value : nullptr)));
+			}
+
+			TArray<FString> BodyArgs;
+			for (const FString& RawKey : RawArgKeys)
+			{
+				if (const FString* ParamName = RawKeyToParamName.Find(RawKey))
+				{
+					BodyArgs.Add(FString::Printf(TEXT("%s: %s"), *TaskAtlasCompositePythonQuote(RawKey), **ParamName));
+				}
+				else
+				{
+					const TSharedPtr<FJsonValue>* Value = UnrealMcp::Compat::FindJsonValue(*ArgsTemplate, RawKey);
+					BodyArgs.Add(FString::Printf(
+						TEXT("%s: %s"),
+						*TaskAtlasCompositePythonQuote(RawKey),
+						*TaskAtlasCompositeJsonValueToPythonLiteral(Value ? *Value : nullptr)));
+				}
+			}
+			const FString ArgsLiteral = TEXT("{") + FString::Join(BodyArgs, TEXT(", ")) + TEXT("}");
+			const FString Params = FString::Join(ParamDecls, TEXT(", "));
+
+			OutProduct.MainPy += TEXT("\n");
+			OutProduct.MainPy += TEXT("    @toolset_registry.tool_call\n");
+			OutProduct.MainPy += TEXT("    @staticmethod\n");
+			OutProduct.MainPy += FString::Printf(TEXT("    def %s(%s) -> str:\n"), *MethodName, *Params);
+			OutProduct.MainPy += FString::Printf(TEXT("        \"\"\"Delegate to governed UEAtelier tool %s.\n\n"), *Step.ToolName);
+			OutProduct.MainPy += TEXT("        Args:\n");
+			if (ParamDecls.Num() == 0)
+			{
+				OutProduct.MainPy += TEXT("          None.\n");
+			}
+			else
+			{
+				for (const FString& RawKey : RawArgKeys)
+				{
+					const FString* ParamName = RawKeyToParamName.Find(RawKey);
+					if (ParamName)
+					{
+						OutProduct.MainPy += FString::Printf(TEXT("          %s: Forwarded as %s.\n"), **ParamName, *RawKey);
+					}
+				}
+			}
+			OutProduct.MainPy += TEXT("        Returns:\n");
+			OutProduct.MainPy += TEXT("          JSON string returned by UEAtelier call_tool.\n");
+			OutProduct.MainPy += TEXT("        \"\"\"\n");
+			OutProduct.MainPy += FString::Printf(
+				TEXT("        return unreal.UnrealMcpCallTool.call_tool(%s, json.dumps(%s))\n"),
+				*TaskAtlasCompositePythonQuote(Step.ToolName),
+				*ArgsLiteral);
+
+			FOfficialToolsetToolInfo ToolInfo;
+			ToolInfo.Name = MethodName;
+			ToolInfo.ParamSchemaTypes = MoveTemp(ParamSchemaTypes);
+			ToolInfo.ReturnType = TEXT("str");
+			ToolInfo.GovernedToolId = Step.ToolName;
+			ToolInfo.ArgsTemplate = ArgsTemplate;
+			OutProduct.Tools.Add(MoveTemp(ToolInfo));
+		}
+
+		OutProduct.MainPy += FString::Printf(TEXT("\n\nREGISTRATION = Registration((%s,))\n\n\n"), *OutProduct.ClassName);
+		OutProduct.MainPy += TEXT("def register() -> bool: return REGISTRATION.register()\n\n\n");
+		OutProduct.MainPy += TEXT("def unregister() -> None: REGISTRATION.unregister()\n");
+
+		OutProduct.MainPySha256 = ComputePythonHandlerSha256(OutProduct.MainPy);
+		OutProduct.SchemaHash = TaskAtlasCompositeMakeSchemaHash(OutProduct.Tools);
+		OutProduct.ManifestJson = TaskAtlasCompositeBuildOfficialManifest(
+			OutProduct.ToolsetName,
+			OutProduct.ClassName,
+			OutProduct.ModuleName,
+			TaskId,
+			OutProduct.SchemaHash,
+			OutProduct.Tools);
+		return true;
+	}
+#endif
 
 	bool WriteCompositeUserToolFiles(
 		const FString& ToolId,
