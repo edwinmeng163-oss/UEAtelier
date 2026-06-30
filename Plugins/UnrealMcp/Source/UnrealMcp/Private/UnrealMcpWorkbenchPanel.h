@@ -30,6 +30,7 @@ private:
 	FReply HandleKnowledgeSearchClicked();
 	FReply HandleToolRecommendClicked();
 	FReply HandleKnowledgeEvalClicked();
+	FReply HandleOfficialServerToggleClicked();
 	FReply HandleCopyResultClicked();
 	FReply OnRefreshInstallDoctor();
 	FReply OnOpenInstallDoctorLatestFolder();

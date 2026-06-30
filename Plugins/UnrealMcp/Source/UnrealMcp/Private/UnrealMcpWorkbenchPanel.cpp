@@ -9,6 +9,7 @@
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 #include "Styling/AppStyle.h"
+#include "UnrealMcpEngineCompat.h"
 #include "UnrealMcpModule.h"
 #include "UnrealMcpSelfExtensionInternal.h"
 #include "UnrealMcpSharedPathResolver.h"
@@ -19,6 +20,12 @@
 #include "Widgets/Layout/SSeparator.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Text/STextBlock.h"
+
+#if UNREALMCP_HAS_OFFICIAL_TOOLSETS
+#include "IModelContextProtocolModule.h"
+#include "ModelContextProtocol.h"
+#include "ModelContextProtocolServer.h"
+#endif
 
 #define LOCTEXT_NAMESPACE "UnrealMcpWorkbenchPanel"
 
@@ -182,6 +189,48 @@ namespace UnrealMcpWorkbench
 		return UnrealMcp::ResolveSharedRepoRoot(TEXT("UnrealMcpKnowledge/Evals"), { TEXT("*.json") }, EvalPath, EvalPathCandidates)
 			&& UnrealMcp::SharedRepoRootHasAny(EvalPath, { TEXT("*.json") });
 	}
+
+#if UNREALMCP_HAS_OFFICIAL_TOOLSETS
+	IModelContextProtocolModule* GetOfficialModelContextProtocolModule()
+	{
+		return IModelContextProtocolModule::Get();
+	}
+
+	FModelContextProtocolServer* GetOfficialModelContextProtocolServer()
+	{
+		IModelContextProtocolModule* const Module = GetOfficialModelContextProtocolModule();
+		return Module ? Module->GetServer() : nullptr;
+	}
+
+	bool IsOfficialModelContextProtocolServerRunning()
+	{
+		const FModelContextProtocolServer* const Server = GetOfficialModelContextProtocolServer();
+		return Server && Server->IsServerRunning();
+	}
+
+	FText GetOfficialModelContextProtocolStatusText()
+	{
+		IModelContextProtocolModule* const Module = GetOfficialModelContextProtocolModule();
+		if (!Module)
+		{
+			return LOCTEXT("OfficialServerModuleNotLoaded", "Module not loaded");
+		}
+
+		const FModelContextProtocolServer* const Server = Module->GetServer();
+		if (Server && Server->IsServerRunning())
+		{
+			return FText::FromString(FString::Printf(TEXT("Running (:%u)"), Server->GetServerPort()));
+		}
+		return LOCTEXT("OfficialServerStopped", "Stopped");
+	}
+
+	FSlateColor GetOfficialModelContextProtocolStatusColor()
+	{
+		return IsOfficialModelContextProtocolServerRunning()
+			? FSlateColor(FLinearColor(0.30f, 0.70f, 0.30f, 1.0f))
+			: FSlateColor(FLinearColor(0.36f, 0.36f, 0.36f, 1.0f));
+	}
+#endif
 }
 
 void SUnrealMcpWorkbenchPanel::Construct(const FArguments& InArgs, FUnrealMcpModule* InOwnerModule)
@@ -506,6 +555,75 @@ void SUnrealMcpWorkbenchPanel::Construct(const FArguments& InArgs, FUnrealMcpMod
 					]
 				]
 			]
+#if UNREALMCP_HAS_OFFICIAL_TOOLSETS
+			+ SVerticalBox::Slot()
+			.AutoHeight()
+			.Padding(0.0f, 10.0f, 0.0f, 0.0f)
+			[
+				SNew(SBorder)
+				.BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder"))
+				.Padding(10.0f)
+				[
+					SNew(SVerticalBox)
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					.Padding(0.0f, 0.0f, 0.0f, 8.0f)
+					[
+						SNew(STextBlock)
+						.Text(LOCTEXT("OfficialServerTitle", "Official MCP Server (UE5.8)"))
+						.Font(FAppStyle::GetFontStyle("NormalFontBold"))
+					]
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					[
+						SNew(SHorizontalBox)
+						+ SHorizontalBox::Slot()
+						.AutoWidth()
+						.VAlign(VAlign_Center)
+						.Padding(0.0f, 0.0f, 6.0f, 0.0f)
+						[
+							SNew(STextBlock)
+							.Text(LOCTEXT("OfficialServerStatusLabel", "Status:"))
+							.Font(FAppStyle::GetFontStyle("NormalFontBold"))
+						]
+						+ SHorizontalBox::Slot()
+						.AutoWidth()
+						.VAlign(VAlign_Center)
+						.Padding(0.0f, 0.0f, 14.0f, 0.0f)
+						[
+							SNew(SBorder)
+							.BorderImage(FAppStyle::GetBrush("WhiteBrush"))
+							.BorderBackgroundColor_Lambda([]()
+							{
+								return UnrealMcpWorkbench::GetOfficialModelContextProtocolStatusColor();
+							})
+							.Padding(FMargin(8.0f, 2.0f))
+							[
+								SNew(STextBlock)
+								.Text_Lambda([]()
+								{
+									return UnrealMcpWorkbench::GetOfficialModelContextProtocolStatusText();
+								})
+								.ColorAndOpacity(FSlateColor(FLinearColor::White))
+							]
+						]
+						+ SHorizontalBox::Slot()
+						.AutoWidth()
+						.VAlign(VAlign_Center)
+						[
+							SNew(SButton)
+							.Text_Lambda([]()
+							{
+								return UnrealMcpWorkbench::IsOfficialModelContextProtocolServerRunning()
+									? LOCTEXT("OfficialServerStop", "Stop official server")
+									: LOCTEXT("OfficialServerStart", "Start official server");
+							})
+							.OnClicked(this, &SUnrealMcpWorkbenchPanel::HandleOfficialServerToggleClicked)
+						]
+					]
+				]
+			]
+#endif
 			+ SVerticalBox::Slot()
 			.AutoHeight()
 			.Padding(0.0f, 10.0f, 0.0f, 6.0f)
@@ -657,6 +775,31 @@ FReply SUnrealMcpWorkbenchPanel::HandleKnowledgeEvalClicked()
 	Arguments->SetBoolField(TEXT("includeDetails"), false);
 	Arguments->SetNumberField(TEXT("limit"), 6.0);
 	RunToolAndDisplay(TEXT("unreal.knowledge_eval_run"), Arguments);
+	return FReply::Handled();
+}
+
+FReply SUnrealMcpWorkbenchPanel::HandleOfficialServerToggleClicked()
+{
+#if UNREALMCP_HAS_OFFICIAL_TOOLSETS
+	IModelContextProtocolModule* const Module = UnrealMcpWorkbench::GetOfficialModelContextProtocolModule();
+	if (!Module)
+	{
+		UpdateLastResult(TEXT("official_mcp_server"), TEXT("Official MCP module not loaded."), nullptr, true);
+		return FReply::Handled();
+	}
+
+	const FModelContextProtocolServer* const Server = Module->GetServer();
+	if (Server && Server->IsServerRunning())
+	{
+		Module->StopServer();
+		UpdateLastResult(TEXT("official_mcp_server"), TEXT("Official MCP server stop requested."), nullptr, false);
+	}
+	else
+	{
+		Module->StartServer(UE::ModelContextProtocol::DefaultServerPort, UE::ModelContextProtocol::DefaultServerUrlPath);
+		UpdateLastResult(TEXT("official_mcp_server"), TEXT("Official MCP server start requested."), nullptr, false);
+	}
+#endif
 	return FReply::Handled();
 }
 
