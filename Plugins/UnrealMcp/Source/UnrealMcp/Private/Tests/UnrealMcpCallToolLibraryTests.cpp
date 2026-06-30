@@ -6,12 +6,14 @@
 #include "HAL/FileManager.h"
 #include "Misc/AutomationTest.h"
 #include "Misc/FileHelper.h"
+#include "Misc/Guid.h"
 #include "Misc/Paths.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "UnrealMcpCallToolLibrary.h"
 #include "UnrealMcpModule.h"
 #include "UnrealMcpPythonToolBridge.h"
+#include "UnrealMcpSession.h"
 #include "UnrealMcpToolHandlerRegistry.h"
 #include "UnrealMcpUserToolLock.h"
 #include "UnrealMcpUserToolRegistry.h"
@@ -124,6 +126,90 @@ namespace UnrealMcpCallToolLibraryTests
 		return WriteTextFile(FPaths::Combine(DemoToolDir(), TEXT("main.py")), DemoMainPy)
 			&& WriteTextFile(FPaths::Combine(DemoToolDir(), TEXT("tool.json")), ToolJson);
 	}
+
+	FString LaunchActivityLogPath()
+	{
+		return FPaths::ConvertRelativePathToFull(FPaths::Combine(
+			FPaths::ProjectSavedDir(),
+			TEXT("UnrealMcp/ActivityLog"),
+			UnrealMcp::GetLaunchSessionId() + TEXT(".jsonl")));
+	}
+
+	int32 LoadActivityLogLines(TArray<FString>& OutLines)
+	{
+		OutLines.Reset();
+		FFileHelper::LoadFileToStringArray(OutLines, *LaunchActivityLogPath());
+		return OutLines.Num();
+	}
+
+	bool TryParseJsonLine(const FString& Line, TSharedPtr<FJsonObject>& OutObject)
+	{
+		const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Line);
+		return FJsonSerializer::Deserialize(Reader, OutObject) && OutObject.IsValid();
+	}
+
+	bool PayloadHasArgumentKey(const TSharedPtr<FJsonObject>& Payload, const FString& RequiredArgumentKey)
+	{
+		if (RequiredArgumentKey.IsEmpty())
+		{
+			return true;
+		}
+
+		const TArray<TSharedPtr<FJsonValue>>* ArgumentKeys = nullptr;
+		if (!Payload.IsValid() || !Payload->TryGetArrayField(TEXT("argumentKeys"), ArgumentKeys) || !ArgumentKeys)
+		{
+			return false;
+		}
+
+		for (const TSharedPtr<FJsonValue>& ArgumentKeyValue : *ArgumentKeys)
+		{
+			FString ArgumentKey;
+			if (ArgumentKeyValue.IsValid() && ArgumentKeyValue->TryGetString(ArgumentKey) && ArgumentKey == RequiredArgumentKey)
+			{
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	TSharedPtr<FJsonObject> FindToolCallPayloadAfterLine(
+		const TArray<FString>& Lines,
+		int32 FirstLineIndex,
+		const FString& ToolName,
+		const FString& RequiredArgumentKey)
+	{
+		for (int32 Index = FMath::Max(0, FirstLineIndex); Index < Lines.Num(); ++Index)
+		{
+			TSharedPtr<FJsonObject> Record;
+			if (!TryParseJsonLine(Lines[Index], Record))
+			{
+				continue;
+			}
+
+			FString EventKind;
+			Record->TryGetStringField(TEXT("eventKind"), EventKind);
+			if (EventKind != TEXT("tool_call"))
+			{
+				continue;
+			}
+
+			const TSharedPtr<FJsonObject>* Payload = nullptr;
+			if (!Record->TryGetObjectField(TEXT("payload"), Payload) || !Payload || !(*Payload).IsValid())
+			{
+				continue;
+			}
+
+			FString PayloadToolName;
+			(*Payload)->TryGetStringField(TEXT("toolName"), PayloadToolName);
+			if (PayloadToolName == ToolName && PayloadHasArgumentKey(*Payload, RequiredArgumentKey))
+			{
+				return *Payload;
+			}
+		}
+
+		return nullptr;
+	}
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
@@ -152,6 +238,59 @@ bool FUnrealMcpCallToolReturnSchemaTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("meta forcedDryRun present"), Payload->GetObjectField(TEXT("meta"))->HasField(TEXT("forcedDryRun")));
 	TestTrue(TEXT("meta truncated present"), Payload->GetObjectField(TEXT("meta"))->HasField(TEXT("truncated")));
 	TestTrue(TEXT("meta reason present"), Payload->GetObjectField(TEXT("meta"))->HasField(TEXT("reason")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FUnrealMcpCallToolActivityLogTest,
+	"UnrealMcp.CallTool.ActivityLog",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FUnrealMcpCallToolActivityLogTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	using namespace UnrealMcpCallToolLibraryTests;
+
+	TArray<FString> BeforeLines;
+	const int32 BeforeCount = LoadActivityLogLines(BeforeLines);
+	const FString ProbeKey = TEXT("auditProbe_") + FGuid::NewGuid().ToString(EGuidFormats::Digits);
+	const FString ArgumentsJson = FString::Printf(TEXT("{\"%s\":true}"), *ProbeKey);
+
+	TSharedPtr<FJsonObject> Payload;
+	TestTrue(TEXT("payload parses"), ParseCallToolPayload(UUnrealMcpCallToolLibrary::CallTool(TEXT("unreal.editor_status"), ArgumentsJson), Payload));
+	if (!Payload.IsValid())
+	{
+		return false;
+	}
+
+	TArray<FString> AfterLines;
+	const int32 AfterCount = LoadActivityLogLines(AfterLines);
+	const int32 FirstCandidateLine = AfterCount > BeforeCount ? BeforeCount : 0;
+	const TSharedPtr<FJsonObject> ActivityPayload = FindToolCallPayloadAfterLine(AfterLines, FirstCandidateLine, TEXT("unreal.editor_status"), ProbeKey);
+	TestTrue(TEXT("call_tool wrote editor_status tool_call payload"), ActivityPayload.IsValid());
+	if (!ActivityPayload.IsValid())
+	{
+		return false;
+	}
+
+	FString HandlerName;
+	FString RiskLevel;
+	bool bIsError = true;
+	bool bHasStructuredContent = false;
+	ActivityPayload->TryGetStringField(TEXT("handlerName"), HandlerName);
+	ActivityPayload->TryGetStringField(TEXT("riskLevel"), RiskLevel);
+	ActivityPayload->TryGetBoolField(TEXT("isError"), bIsError);
+	ActivityPayload->TryGetBoolField(TEXT("hasStructuredContent"), bHasStructuredContent);
+
+	TestFalse(TEXT("activity isError false"), bIsError);
+	TestFalse(TEXT("activity handlerName present"), HandlerName.IsEmpty());
+	TestFalse(TEXT("activity riskLevel present"), RiskLevel.IsEmpty());
+	TestTrue(TEXT("activity argumentKeys present"), ActivityPayload->HasTypedField<EJson::Array>(TEXT("argumentKeys")));
+	TestTrue(TEXT("activity captureStatus present"), ActivityPayload->HasField(TEXT("captureStatus")));
+	TestTrue(TEXT("activity textLength present"), ActivityPayload->HasField(TEXT("textLength")));
+	TestTrue(TEXT("activity durationMs present"), ActivityPayload->HasField(TEXT("durationMs")));
+	TestTrue(TEXT("activity hasStructuredContent true"), bHasStructuredContent);
 	return true;
 }
 

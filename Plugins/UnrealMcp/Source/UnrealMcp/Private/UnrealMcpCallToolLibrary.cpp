@@ -3,12 +3,22 @@
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Modules/ModuleManager.h"
+#include "Misc/Guid.h"
+#include "UnrealMcpActivityLog.h"
+#include "UnrealMcpCaptureRedaction.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 #include "UnrealMcpCallToolPolicy.h"
 #include "UnrealMcpModule.h"
+#include "UnrealMcpToolHandlerRegistry.h"
 #include "UnrealMcpToolRegistry.h"
+#include "UnrealMcpUserToolRegistry.h"
+
+namespace UnrealMcp
+{
+	TArray<TSharedPtr<FJsonValue>> MakeJsonStringArray(const TArray<FString>& Values);
+}
 
 namespace UnrealMcpCallToolLibraryLocal
 {
@@ -135,6 +145,63 @@ namespace UnrealMcpCallToolLibraryLocal
 		Facts.Depth = FScopedCallToolDepth::Current();
 		return Facts;
 	}
+
+	void EmitActivityLogEventForKnownTool(
+		const FString& ToolName,
+		const FJsonObject& Arguments,
+		const FDateTime& ToolStartTimeUtc,
+		const FUnrealMcpExecutionResult& Result)
+	{
+		const bool bToolKnown = (UnrealMcp::FindToolRegistryEntry(ToolName) != nullptr)
+			|| (UnrealMcp::UserRegistry::FindUserTool(ToolName) != nullptr);
+		if (!bToolKnown)
+		{
+			return;
+		}
+
+		TArray<FString> ArgumentKeys;
+		for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Arguments.Values)
+		{
+			ArgumentKeys.Add(Pair.Key);
+		}
+		ArgumentKeys.Sort();
+
+		const FString HandlerName = UnrealMcp::ResolveToolHandlerName(ToolName);
+		const UnrealMcp::FToolPolicy ActivityPolicy = UnrealMcp::GetToolPolicy(ToolName);
+		const FString EventId = FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphensLower);
+		TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+		Payload->SetStringField(TEXT("toolName"), ToolName);
+		Payload->SetStringField(TEXT("handlerName"), HandlerName);
+		Payload->SetStringField(TEXT("riskLevel"), UnrealMcp::LexToString(ActivityPolicy.RiskLevel));
+		Payload->SetArrayField(TEXT("argumentKeys"), UnrealMcp::MakeJsonStringArray(ArgumentKeys));
+		UnrealMcp::CaptureRedaction::AttachCaptureMetadata(Payload, ToolName, Arguments, EventId);
+		Payload->SetBoolField(TEXT("isError"), Result.bIsError);
+		Payload->SetNumberField(TEXT("textLength"), Result.Text.Len());
+		Payload->SetBoolField(TEXT("hasStructuredContent"), Result.StructuredContent.IsValid());
+		Payload->SetNumberField(TEXT("durationMs"), FMath::Max(0.0, (FDateTime::UtcNow() - ToolStartTimeUtc).GetTotalMilliseconds()));
+
+		const UnrealMcp::FToolHandlerRegistryEntry* ActivityHandlerEntry = UnrealMcp::FindToolHandlerRegistryEntry(HandlerName);
+		if (ActivityHandlerEntry && ActivityHandlerEntry->ImplementationTrack == UnrealMcp::EToolImplementationTrack::Python)
+		{
+			FString PythonActualSha256;
+			if (Result.StructuredContent.IsValid())
+			{
+				Result.StructuredContent->TryGetStringField(TEXT("pythonActualSha256"), PythonActualSha256);
+			}
+			Payload->SetStringField(TEXT("pythonHandlerPath"), ActivityHandlerEntry->PythonHandlerPath);
+			Payload->SetStringField(TEXT("pythonExpectedSha256"), ActivityHandlerEntry->PythonHandlerSha256);
+			Payload->SetStringField(TEXT("pythonActualSha256"), PythonActualSha256);
+			Payload->SetNumberField(TEXT("pythonImportAllowListSize"), ActivityHandlerEntry->PythonImportAllowList.Num());
+		}
+
+		UnrealMcp::FActivityLogEvent Event;
+		Event.EventId = EventId;
+		Event.EventKind = TEXT("tool_call");
+		Event.Summary = FString::Printf(TEXT("Called MCP tool %s through call_tool: %s."), *ToolName, Result.bIsError ? TEXT("failed") : TEXT("completed")).Left(2000);
+		Event.Payload = Payload;
+		Event.LegacyEventType = FString();
+		UnrealMcp::WriteActivityEvent(Event);
+	}
 }
 
 FString UUnrealMcpCallToolLibrary::CallTool(const FString& ToolName, const FString& ArgumentsJson)
@@ -173,7 +240,13 @@ FString UUnrealMcpCallToolLibrary::CallTool(const FString& ToolName, const FStri
 			PolicyResult.bForcedDryRun);
 	}
 
+	const FDateTime ToolStartTimeUtc = FDateTime::UtcNow();
 	const FUnrealMcpExecutionResult Result = Module->ExecuteToolFromEditorUI(ToolName, *ParsedArguments);
+	UnrealMcpCallToolLibraryLocal::EmitActivityLogEventForKnownTool(
+		ToolName,
+		*ParsedArguments,
+		ToolStartTimeUtc,
+		Result);
 	return UnrealMcpCallToolLibraryLocal::MakeResultPayload(
 		ToolName,
 		Result,
