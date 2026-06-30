@@ -288,3 +288,41 @@ Proceed with UE5.8 validation only. Spike 1 removes the largest uncertainty for
 runtime official Python authoring, but the plan is not shippable until Spike 2
 proves `:8765` + `:8000` coexistence and until generated official tools are
 forced through UEAtelier's policy/audit executor.
+
+---
+
+## Locked decisions (2026-06-30, director)
+
+Both gating spikes now PASS: Spike 1 (official Python register/reload runtime-hot,
+no restart) and Spike 2 (our `:8765` + official `:8000` coexist in one 5.8 editor,
+zero collisions). The 8 open decisions are resolved as:
+
+1. **Scope**: v0.33 is **validation-only** — internal tag at most, no public release.
+   The public line stays v0.32.x (UE5.6/5.7).
+2. **Official `:8000`**: **opt-in, OFF by default**, exposed as a **Workbench UI
+   switch** to start/stop the official server.
+3. **Policy delegation**: **MANDATORY for every generated official tool** —
+   structurally enforced. Generated wrappers contain no direct editor/project
+   mutation; they only marshal args into the UEAtelier policy executor (approval /
+   dry-run / deny / path-safety / ActivityLog / redaction / backup-manifest-rollback
+   / postcheck). A validator rejects any generated toolset that imports mutation
+   APIs directly. This applies to BOTH the Python and the C++ paths.
+4. **Location**: reviewed official toolsets live in **`Tools/UnrealMcpOfficialToolsets/`**;
+   AI-generated drafts under **`Saved/UnrealMcp/OfficialToolsetDrafts/`** (local, not
+   committed). Kept separate from `Tools/UnrealMcpPyTools` (the `:8765` track) and
+   from engine `Content/Python`.
+5. **AgentSkill**: **instruction-only for now** (no auto-paired callable toolset yet).
+6. **C++ ToolsetDefinition**: **IS offered in the Make-Tools UI** (not developer-only).
+   On completion the UI drives generate → build → **editor restart**. Still subject to
+   decision 3 (delegates to the policy executor).
+7. **Client matrix**: **`:8765` is the supported client surface** (Codex/Claude/SDK);
+   **`:8000` is best-effort interop** for v0.33.
+8. **Dual-track**: **kept** (Spike 2 validated coexistence). FOLLOW-UP (tracked, not
+   blocking validation, scheduling TBD): bump `:8765` to support MCP `2025-11-25` so a
+   single modern client can talk to both servers (currently `:8765` only accepts
+   `2025-06-18` and rejects `2025-11-25`).
+
+### Remaining gate before shippable
+
+Only decision-3's policy-delegation implementation (Phase B). Coexistence and
+runtime-hot authoring are now proven.
