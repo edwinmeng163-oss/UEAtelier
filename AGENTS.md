@@ -322,6 +322,7 @@ Tool metadata: UnrealMcpToolDefinitions.cpp, UnrealMcpToolDescriptor.h,
   UnrealMcpToolHandlerRegistry.cpp/.h, UnrealMcpToolDispatcher.cpp
 Execution: UnrealMcpToolExecutionGuard.cpp/.h, UnrealMcp*OutcomeVerifier.cpp,
   UnrealMcpSession.h, UnrealMcpActivityLog.h, UnrealMcpCallToolPolicy.cpp/.h,
+  UnrealMcpVettedToolset.cpp/.h,
   UnrealMcpCallToolLibrary.cpp/.h, UnrealMcpPythonToolBridge.cpp,
   UnrealMcpHashUtils.cpp/.h, UnrealMcpCaptureRedaction.cpp/.h,
   UnrealMcpCapturedArgsStore.cpp/.h

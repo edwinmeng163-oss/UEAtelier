@@ -41,6 +41,7 @@ bool FUnrealMcpCallToolPolicyMatrixTest::RunTest(const FString& Parameters)
 	int32 AllowCount = 0;
 	int32 ForceDryRunCount = 0;
 	int32 DenyCount = 0;
+	int32 AllowVettedRealCount = 0;
 	int32 VisibleCount = 0;
 
 	for (const UnrealMcp::FToolRegistryEntry& Entry : UnrealMcp::GetToolRegistryEntries())
@@ -64,6 +65,9 @@ bool FUnrealMcpCallToolPolicyMatrixTest::RunTest(const FString& Parameters)
 		case UnrealMcp::ECallToolDecision::Deny:
 			++DenyCount;
 			break;
+		case UnrealMcp::ECallToolDecision::AllowVettedReal:
+			++AllowVettedRealCount;
+			break;
 		default:
 			AddError(FString::Printf(TEXT("Unexpected call_tool decision for %s"), *Entry.Name));
 			break;
@@ -74,19 +78,37 @@ bool FUnrealMcpCallToolPolicyMatrixTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("force dry run count"), ForceDryRunCount, 31);
 	TestEqual(TEXT("deny count"), DenyCount, 82);
 	TestEqual(TEXT("allow count"), AllowCount, 65);
+	TestEqual(TEXT("allow vetted real count"), AllowVettedRealCount, 0);
 
 	auto ExpectDecision = [this](
 		const TCHAR* ToolName,
 		UnrealMcp::ECallToolDecision ExpectedDecision,
 		const TCHAR* ExpectedReason)
 	{
-		const UnrealMcp::FCallToolTargetFacts Facts = UnrealMcpCallToolPolicyTests::MakeFactsForTool(ToolName);
+		UnrealMcp::FCallToolTargetFacts Facts = UnrealMcpCallToolPolicyTests::MakeFactsForTool(ToolName);
+		Facts.bInVettedToolsetContext = false;
 		const UnrealMcp::FCallToolPolicyResult Result = UnrealMcp::ClassifyCallToolTarget_Pure(Facts);
 		TestTrue(
 			FString::Printf(TEXT("%s decision"), ToolName),
 			Result.Decision == ExpectedDecision);
 		TestEqual(
 			FString::Printf(TEXT("%s reason"), ToolName),
+			Result.Reason,
+			FString(ExpectedReason));
+	};
+
+	auto ExpectFactsDecision = [this](
+		const TCHAR* Label,
+		const UnrealMcp::FCallToolTargetFacts& Facts,
+		UnrealMcp::ECallToolDecision ExpectedDecision,
+		const TCHAR* ExpectedReason)
+	{
+		const UnrealMcp::FCallToolPolicyResult Result = UnrealMcp::ClassifyCallToolTarget_Pure(Facts);
+		TestTrue(
+			FString::Printf(TEXT("%s decision"), Label),
+			Result.Decision == ExpectedDecision);
+		TestEqual(
+			FString::Printf(TEXT("%s reason"), Label),
 			Result.Reason,
 			FString(ExpectedReason));
 	};
@@ -115,6 +137,35 @@ bool FUnrealMcpCallToolPolicyMatrixTest::RunTest(const FString& Parameters)
 	const UnrealMcp::FCallToolPolicyResult HiddenResult = UnrealMcp::ClassifyCallToolTarget_Pure(HiddenFacts);
 	TestTrue(TEXT("hidden decision"), HiddenResult.Decision == UnrealMcp::ECallToolDecision::Deny);
 	TestEqual(TEXT("hidden reason"), HiddenResult.Reason, TEXT("not_visible"));
+
+	UnrealMcp::FCallToolTargetFacts VettedDryRunFacts = UnrealMcpCallToolPolicyTests::MakeFactsForTool(TEXT("unreal.code_apply_change"));
+	VettedDryRunFacts.bInVettedToolsetContext = true;
+	ExpectFactsDecision(TEXT("vetted dry-run-capable dangerous"), VettedDryRunFacts, UnrealMcp::ECallToolDecision::AllowVettedReal, TEXT("vetted_real"));
+
+	UnrealMcp::FCallToolTargetFacts VettedNoDryRunFacts = UnrealMcpCallToolPolicyTests::MakeFactsForTool(TEXT("unreal.execute_python"));
+	VettedNoDryRunFacts.bInVettedToolsetContext = true;
+	ExpectFactsDecision(TEXT("vetted no-dry-run dangerous"), VettedNoDryRunFacts, UnrealMcp::ECallToolDecision::AllowVettedReal, TEXT("vetted_real"));
+
+	UnrealMcp::FCallToolTargetFacts VettedHiddenFacts = VettedDryRunFacts;
+	VettedHiddenFacts.bVisible = false;
+	ExpectFactsDecision(TEXT("vetted hidden hard deny"), VettedHiddenFacts, UnrealMcp::ECallToolDecision::Deny, TEXT("not_visible"));
+
+	UnrealMcp::FCallToolTargetFacts VettedUserFacts = VettedDryRunFacts;
+	VettedUserFacts.SourceKind = UnrealMcp::Extension::ESourceKind::UserRegistry;
+	ExpectFactsDecision(TEXT("vetted user hard deny"), VettedUserFacts, UnrealMcp::ECallToolDecision::Deny, TEXT("user_tool_forbidden"));
+
+	UnrealMcp::FCallToolTargetFacts VettedDepthFacts = VettedDryRunFacts;
+	VettedDepthFacts.Depth = 1;
+	ExpectFactsDecision(TEXT("vetted depth hard deny"), VettedDepthFacts, UnrealMcp::ECallToolDecision::Deny, TEXT("call_tool_depth_exceeded"));
+
+	UnrealMcp::FCallToolTargetFacts VettedWorkflowFacts = UnrealMcpCallToolPolicyTests::MakeFactsForTool(TEXT("unreal.editor_status"));
+	VettedWorkflowFacts.bInVettedToolsetContext = true;
+	VettedWorkflowFacts.bIsWorkflowRun = true;
+	ExpectFactsDecision(TEXT("vetted workflow hard deny"), VettedWorkflowFacts, UnrealMcp::ECallToolDecision::Deny, TEXT("workflow_run_forbidden"));
+
+	UnrealMcp::FCallToolTargetFacts VettedSafeFacts = UnrealMcpCallToolPolicyTests::MakeFactsForTool(TEXT("unreal.editor_status"));
+	VettedSafeFacts.bInVettedToolsetContext = true;
+	ExpectFactsDecision(TEXT("vetted safe tool"), VettedSafeFacts, UnrealMcp::ECallToolDecision::Allow, TEXT(""));
 
 	return true;
 }

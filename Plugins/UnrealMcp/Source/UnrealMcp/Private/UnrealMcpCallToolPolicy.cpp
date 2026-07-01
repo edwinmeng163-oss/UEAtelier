@@ -51,6 +51,14 @@ namespace UnrealMcp
 			|| F.bRequiresBuild;
 		if (bDangerous)
 		{
+			if (F.bInVettedToolsetContext)
+			{
+				FCallToolPolicyResult Result;
+				Result.Decision = ECallToolDecision::AllowVettedReal;
+				Result.Reason = TEXT("vetted_real");
+				return Result;
+			}
+
 			if (F.bDryRunSupport)
 			{
 				FCallToolPolicyResult Result;

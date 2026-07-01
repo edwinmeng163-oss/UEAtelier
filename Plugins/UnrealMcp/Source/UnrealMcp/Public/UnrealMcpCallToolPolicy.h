@@ -15,7 +15,8 @@ namespace UnrealMcp
 	{
 		Allow,
 		ForceDryRun,
-		Deny
+		Deny,
+		AllowVettedReal
 	};
 
 	struct FCallToolPolicyResult
@@ -39,6 +40,7 @@ namespace UnrealMcp
 		bool bRequiresBuild = false;
 		bool bDryRunSupport = false;
 		bool bIsWorkflowRun = false;
+		bool bInVettedToolsetContext = false;
 		int32 Depth = 0;
 	};
 
