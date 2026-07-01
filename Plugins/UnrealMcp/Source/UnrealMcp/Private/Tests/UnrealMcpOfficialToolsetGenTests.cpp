@@ -16,6 +16,7 @@
 #include "Modules/ModuleManager.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
 #include "ToolsetRegistry/ToolCallAsyncResultString.h"
 #include "ToolsetRegistry/UToolsetRegistry.h"
 #include "UObject/StrongObjectPtr.h"
@@ -26,11 +27,14 @@
 #include "UnrealMcpSharedPathResolver.h"
 #include "UnrealMcpTaskAtlasService.h"
 #include "UnrealMcpToolRegistry.h"
+#include "UnrealMcpModule.h"
 
 namespace UnrealMcpOfficialToolsetGenTests
 {
 	const FString ToolId = TEXT("codex_official_toolset_gen");
 	const FString TaskId = TEXT("official-toolset-gen-test");
+	const FString WiredTaskId = TEXT("official-toolset-wired-test");
+	const FString WiredLabel = TEXT("Official Wired Toolset Gen");
 
 	FString DraftDir()
 	{
@@ -51,10 +55,42 @@ namespace UnrealMcpOfficialToolsetGenTests
 		IFileManager::Get().DeleteDirectory(*DraftDir(), false, true);
 	}
 
+	FString ProjectTaskPath(const FString& InTaskId)
+	{
+		return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UnrealMcp/Tasks"), InTaskId + TEXT(".json")));
+	}
+
+	FString WiredTestRoot()
+	{
+		return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UnrealMcp/OfficialToolsetWiredTest")));
+	}
+
+	FString WiredToolId()
+	{
+		return UnrealMcp::TaskAtlasService::MakeAtlasToolId(WiredLabel, WiredTaskId);
+	}
+
+	FString WiredDraftDir()
+	{
+		return FPaths::Combine(UnrealMcp::TaskAtlasService::OfficialToolsetDraftsRootDir(), WiredToolId());
+	}
+
 	bool ParseJsonObject(const FString& Json, TSharedPtr<FJsonObject>& OutObject)
 	{
 		const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Json);
 		return FJsonSerializer::Deserialize(Reader, OutObject) && OutObject.IsValid();
+	}
+
+	FString JsonToString(const TSharedPtr<FJsonObject>& Object)
+	{
+		FString Output;
+		if (!Object.IsValid())
+		{
+			return Output;
+		}
+		const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Output);
+		FJsonSerializer::Serialize(Object.ToSharedRef(), Writer);
+		return Output;
 	}
 
 	bool ParsePossiblyStringWrappedPayload(const FString& Json, TSharedPtr<FJsonObject>& OutObject)
@@ -104,6 +140,33 @@ namespace UnrealMcpOfficialToolsetGenTests
 		return MakeShared<FJsonValueObject>(StepRef);
 	}
 
+	bool WriteWiredTaskFixture(const FString& CaptureRef)
+	{
+		TSharedPtr<FJsonObject> Task = MakeObject();
+		Task->SetStringField(TEXT("taskId"), WiredTaskId);
+		Task->SetStringField(TEXT("label"), WiredLabel);
+		Task->SetStringField(TEXT("rating"), TEXT("unrated"));
+		Task->SetBoolField(TEXT("pinned"), false);
+		Task->SetStringField(TEXT("tStartUtc"), TEXT("2026-06-30T00:00:00Z"));
+		Task->SetStringField(TEXT("tEndUtc"), TEXT("2026-06-30T00:00:01Z"));
+		Task->SetStringField(TEXT("userIntentText"), TEXT("Exercise make_composite emitOfficial wiring."));
+		Task->SetStringField(TEXT("aiSummaryText"), TEXT("Wired official toolset generation from make_composite."));
+		Task->SetStringField(TEXT("replayEligibility"), TEXT("preview_ready"));
+		Task->SetStringField(TEXT("replayUnavailableReason"), FString());
+
+		TArray<TSharedPtr<FJsonValue>> CriticalPath;
+		CriticalPath.Add(MakeShared<FJsonValueString>(TEXT("unreal.editor_status")));
+		Task->SetArrayField(TEXT("criticalPath"), CriticalPath);
+
+		TArray<TSharedPtr<FJsonValue>> StepRefs;
+		StepRefs.Add(MakeStepRef(CaptureRef));
+		Task->SetArrayField(TEXT("stepRefs"), StepRefs);
+
+		const FString TaskPath = ProjectTaskPath(WiredTaskId);
+		IFileManager::Get().MakeDirectory(*FPaths::GetPath(TaskPath), true);
+		return FFileHelper::SaveStringToFile(JsonToString(Task), *TaskPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+	}
+
 	TSet<FString> VisibleCoreToolsForFixture()
 	{
 		TSet<FString> VisibleTools;
@@ -115,6 +178,12 @@ namespace UnrealMcpOfficialToolsetGenTests
 			}
 		}
 		return VisibleTools;
+	}
+
+	FUnrealMcpExecutionResult ExecuteMcpTool(const FString& ToolName, const TSharedPtr<FJsonObject>& Arguments)
+	{
+		FUnrealMcpModule& Module = FModuleManager::LoadModuleChecked<FUnrealMcpModule>(TEXT("UnrealMcp"));
+		return Module.ExecuteToolFromEditorUI(ToolName, *Arguments);
 	}
 
 	FString MakeCaptureSessionId()
@@ -635,6 +704,130 @@ bool FUnrealMcpOfficialToolsetGenTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("query class registration after rollback"), QueryClassRegistered(DraftResult.ModuleName, DraftResult.ClassName, bClassRegisteredAfterRollback, FailureReason));
 	TestFalse(TEXT("toolset class unregistered"), bClassRegisteredAfterRollback);
 	DraftResult.GeneratedDir.Reset();
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FUnrealMcpOfficialToolsetMakeCompositeWiredTest,
+	"UnrealMcp.OfficialToolset.MakeCompositeWired",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FUnrealMcpOfficialToolsetMakeCompositeWiredTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace UnrealMcpOfficialToolsetGenTests;
+
+	const FString CaptureSessionId = MakeCaptureSessionId();
+	const FString Root = WiredTestRoot();
+	const FString PyToolsRoot = FPaths::Combine(Root, TEXT("Tools/UnrealMcpPyTools"));
+	FString OfficialToolsetName;
+	FString OfficialModuleName;
+	FString OfficialGeneratedDir;
+	ON_SCOPE_EXIT
+	{
+		if (!OfficialToolsetName.IsEmpty() && !OfficialModuleName.IsEmpty() && !OfficialGeneratedDir.IsEmpty())
+		{
+			UnrealMcp::TaskAtlasService::RollbackOfficialToolsetDraft(OfficialToolsetName, OfficialModuleName, OfficialGeneratedDir);
+		}
+		UnrealMcp::TaskAtlasService::ClearMadeToolsRootDirForTests();
+		IFileManager::Get().Delete(*ProjectTaskPath(WiredTaskId), false, true, true);
+		IFileManager::Get().DeleteDirectory(*Root, false, true);
+		IFileManager::Get().DeleteDirectory(*WiredDraftDir(), false, true);
+		DeleteCaptureSession(CaptureSessionId);
+	};
+
+	IFileManager::Get().DeleteDirectory(*Root, false, true);
+	IFileManager::Get().DeleteDirectory(*WiredDraftDir(), false, true);
+	IFileManager::Get().MakeDirectory(*PyToolsRoot, true);
+	UnrealMcp::TaskAtlasService::SetMadeToolsRootDirForTests(PyToolsRoot);
+
+	FString CaptureRef;
+	TestTrue(TEXT("write wired captured args"), WriteCapturedArgsFixture(CaptureSessionId, TEXT("official-wired-probe"), CaptureRef));
+	if (CaptureRef.IsEmpty())
+	{
+		return false;
+	}
+	TestTrue(TEXT("write wired Task Atlas task"), WriteWiredTaskFixture(CaptureRef));
+
+	TSharedPtr<FJsonObject> Args = MakeObject();
+	Args->SetStringField(TEXT("taskId"), WiredTaskId);
+	Args->SetBoolField(TEXT("emitOfficial"), true);
+	const FUnrealMcpExecutionResult Result = ExecuteMcpTool(TEXT("unreal.task_atlas_make_composite"), Args);
+	TestFalse(TEXT("wired make_composite is not bIsError"), Result.bIsError);
+	TestTrue(TEXT("wired structured content"), Result.StructuredContent.IsValid());
+	if (!Result.StructuredContent.IsValid())
+	{
+		return false;
+	}
+
+	FString Outcome;
+	Result.StructuredContent->TryGetStringField(TEXT("outcome"), Outcome);
+	TestEqual(TEXT("wired composite outcome"), Outcome, TEXT("CompositeWritten"));
+	FString GeneratedDir;
+	Result.StructuredContent->TryGetStringField(TEXT("generatedDir"), GeneratedDir);
+	TestFalse(TEXT("wired composite generated dir non-empty"), GeneratedDir.IsEmpty());
+	TestTrue(TEXT("wired composite generated dir exists"), IFileManager::Get().DirectoryExists(*GeneratedDir));
+
+	const TSharedPtr<FJsonObject>* OfficialDraft = nullptr;
+	TestTrue(
+		TEXT("officialDraft object present"),
+		Result.StructuredContent->TryGetObjectField(TEXT("officialDraft"), OfficialDraft) && OfficialDraft && (*OfficialDraft).IsValid());
+	if (!OfficialDraft || !(*OfficialDraft).IsValid())
+	{
+		return false;
+	}
+
+	bool bSupported = false;
+	bool bSucceeded = false;
+	(*OfficialDraft)->TryGetBoolField(TEXT("supported"), bSupported);
+	(*OfficialDraft)->TryGetBoolField(TEXT("succeeded"), bSucceeded);
+	TestTrue(TEXT("official draft supported"), bSupported);
+	TestTrue(TEXT("official draft succeeded"), bSucceeded);
+	if (!bSucceeded)
+	{
+		FString ErrorMessage;
+		(*OfficialDraft)->TryGetStringField(TEXT("errorMessage"), ErrorMessage);
+		AddError(ErrorMessage);
+		return false;
+	}
+
+	(*OfficialDraft)->TryGetStringField(TEXT("toolsetName"), OfficialToolsetName);
+	(*OfficialDraft)->TryGetStringField(TEXT("moduleName"), OfficialModuleName);
+	(*OfficialDraft)->TryGetStringField(TEXT("generatedDir"), OfficialGeneratedDir);
+	FString OfficialModulePath;
+	FString OfficialManifestPath;
+	(*OfficialDraft)->TryGetStringField(TEXT("modulePath"), OfficialModulePath);
+	(*OfficialDraft)->TryGetStringField(TEXT("manifestPath"), OfficialManifestPath);
+	TestFalse(TEXT("official toolset name non-empty"), OfficialToolsetName.IsEmpty());
+	TestFalse(TEXT("official module name non-empty"), OfficialModuleName.IsEmpty());
+	TestTrue(TEXT("official generated dir exists"), IFileManager::Get().DirectoryExists(*OfficialGeneratedDir));
+	TestTrue(TEXT("official module exists"), FPaths::FileExists(OfficialModulePath));
+	TestTrue(TEXT("official manifest exists"), FPaths::FileExists(OfficialManifestPath));
+	TestTrue(TEXT("official toolset registered"), UToolsetRegistry::IsToolsetRegistered(OfficialToolsetName));
+
+	const TSharedPtr<FJsonObject>* RegistrationStatus = nullptr;
+	TestTrue(
+		TEXT("officialDraft registrationStatus object"),
+		(*OfficialDraft)->TryGetObjectField(TEXT("registrationStatus"), RegistrationStatus)
+			&& RegistrationStatus
+			&& (*RegistrationStatus).IsValid());
+	if (RegistrationStatus && (*RegistrationStatus).IsValid())
+	{
+		FString State;
+		(*RegistrationStatus)->TryGetStringField(TEXT("state"), State);
+		TestEqual(TEXT("officialDraft registration state"), State, TEXT("registered"));
+	}
+
+	const UnrealMcp::TaskAtlasService::FOfficialToolsetRollbackResult RollbackResult =
+		UnrealMcp::TaskAtlasService::RollbackOfficialToolsetDraft(OfficialToolsetName, OfficialModuleName, OfficialGeneratedDir);
+	TestTrue(TEXT("wired rollback succeeds"), RollbackResult.bSucceeded);
+	if (!RollbackResult.ErrorMessage.IsEmpty())
+	{
+		AddError(RollbackResult.ErrorMessage);
+	}
+	TestFalse(TEXT("wired draft directory deleted"), IFileManager::Get().DirectoryExists(*OfficialGeneratedDir));
+	TestFalse(TEXT("wired toolset unregistered"), UToolsetRegistry::IsToolsetRegistered(OfficialToolsetName));
+	OfficialGeneratedDir.Reset();
 	return true;
 }
 

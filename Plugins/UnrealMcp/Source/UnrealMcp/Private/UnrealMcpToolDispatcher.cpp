@@ -16,6 +16,7 @@
 #include "UnrealMcpCodeTools.h"
 #include "UnrealMcpDiagnosticsTools.h"
 #include "UnrealMcpEditorTools.h"
+#include "UnrealMcpEngineCompat.h"
 #include "UnrealMcpMaterialInstanceTools.h"
 #include "UnrealMcpMemoryTools.h"
 #include "UnrealMcpPieSmokeTools.h"
@@ -80,6 +81,199 @@ namespace UnrealMcp
 			}
 			return JsonValues;
 		}
+
+#if UNREALMCP_HAS_OFFICIAL_TOOLSETS
+		FString GetJsonStringField(const TSharedPtr<FJsonObject>& Object, const TCHAR* FieldName, const FString& DefaultValue = FString())
+		{
+			FString Value = DefaultValue;
+			if (Object.IsValid())
+			{
+				Object->TryGetStringField(FieldName, Value);
+			}
+			return Value.TrimStartAndEnd();
+		}
+
+		TArray<FString> GetJsonStringArrayField(const TSharedPtr<FJsonObject>& Object, const TCHAR* FieldName)
+		{
+			TArray<FString> Values;
+			const TArray<TSharedPtr<FJsonValue>>* JsonValues = nullptr;
+			if (!Object.IsValid() || !Object->TryGetArrayField(FieldName, JsonValues) || !JsonValues)
+			{
+				return Values;
+			}
+			for (const TSharedPtr<FJsonValue>& Value : *JsonValues)
+			{
+				FString StringValue;
+				if (Value.IsValid() && Value->TryGetString(StringValue))
+				{
+					Values.Add(StringValue);
+				}
+			}
+			return Values;
+		}
+
+		TSet<FString> VisibleCoreToolNames()
+		{
+			TSet<FString> VisibleTools;
+			for (const FToolRegistryEntry& Entry : GetToolRegistryEntries())
+			{
+				if (Entry.Exposure == EToolExposure::Visible && Entry.Name.StartsWith(TEXT("unreal."), ESearchCase::CaseSensitive))
+				{
+					VisibleTools.Add(Entry.Name);
+				}
+			}
+			return VisibleTools;
+		}
+
+		TArray<TSharedPtr<FJsonValue>> MakeOfficialStepRefs(const TSharedPtr<FJsonObject>& TaskObject)
+		{
+			TArray<TSharedPtr<FJsonValue>> StepRefs;
+			const TArray<TSharedPtr<FJsonValue>>* RawStepRefs = nullptr;
+			if (!TaskObject.IsValid() || !TaskObject->TryGetArrayField(TEXT("stepRefs"), RawStepRefs) || !RawStepRefs)
+			{
+				return StepRefs;
+			}
+			StepRefs.Reserve(RawStepRefs->Num());
+			for (int32 Index = 0; Index < RawStepRefs->Num(); ++Index)
+			{
+				const TSharedPtr<FJsonValue>& StepValue = (*RawStepRefs)[Index];
+				const TSharedPtr<FJsonObject> RawStep = StepValue.IsValid() && StepValue->Type == EJson::Object ? StepValue->AsObject() : nullptr;
+				if (!RawStep.IsValid())
+				{
+					continue;
+				}
+
+				TSharedPtr<FJsonObject> Step = MakeShared<FJsonObject>();
+				double Ordinal = static_cast<double>(Index);
+				RawStep->TryGetNumberField(TEXT("ordinal"), Ordinal);
+				Step->SetNumberField(TEXT("ordinal"), Ordinal);
+				for (const TCHAR* FieldName : { TEXT("tool"), TEXT("eventId"), TEXT("captureStatus"), TEXT("captureRef"), TEXT("captureSummary"), TEXT("policyClassAtCapture") })
+				{
+					const FString Value = GetJsonStringField(RawStep, FieldName);
+					if (!Value.IsEmpty())
+					{
+						Step->SetStringField(FieldName, Value);
+					}
+				}
+				StepRefs.Add(MakeShared<FJsonValueObject>(Step));
+			}
+			return StepRefs;
+		}
+
+		TSharedPtr<FJsonObject> MakeOfficialDraftFailureContent(const FString& ErrorCode, const FString& ErrorMessage)
+		{
+			TSharedPtr<FJsonObject> Object = MakeShared<FJsonObject>();
+			Object->SetBoolField(TEXT("supported"), true);
+			Object->SetBoolField(TEXT("succeeded"), false);
+			Object->SetStringField(TEXT("errorCode"), ErrorCode);
+			Object->SetStringField(TEXT("errorMessage"), ErrorMessage);
+			Object->SetArrayField(TEXT("toolNames"), TArray<TSharedPtr<FJsonValue>>());
+			Object->SetArrayField(TEXT("validatorIssues"), TArray<TSharedPtr<FJsonValue>>());
+			return Object;
+		}
+
+		TSharedPtr<FJsonObject> MakeOfficialDraftContent(const TaskAtlasService::FOfficialToolsetDraftResult& Result)
+		{
+			TSharedPtr<FJsonObject> Object = MakeOfficialDraftFailureContent(Result.ErrorCode, Result.ErrorMessage);
+			Object->SetBoolField(TEXT("succeeded"), Result.bSucceeded);
+			Object->SetStringField(TEXT("generatedDir"), Result.GeneratedDir);
+			Object->SetStringField(TEXT("stagingDir"), Result.StagingDir);
+			Object->SetStringField(TEXT("modulePath"), Result.ModulePath);
+			Object->SetStringField(TEXT("manifestPath"), Result.ManifestPath);
+			Object->SetStringField(TEXT("moduleName"), Result.ModuleName);
+			Object->SetStringField(TEXT("className"), Result.ClassName);
+			Object->SetStringField(TEXT("toolsetName"), Result.ToolsetName);
+			Object->SetStringField(TEXT("mainPySha256"), Result.MainPySha256);
+			Object->SetStringField(TEXT("manifestJson"), Result.ManifestJson);
+			Object->SetStringField(TEXT("failureDiagnosticPath"), Result.FailureDiagnosticPath);
+			Object->SetArrayField(TEXT("toolNames"), MakeStringArray(Result.ToolNames));
+			Object->SetArrayField(TEXT("validatorIssues"), MakeStringArray(Result.ValidatorIssues));
+
+			TSharedPtr<FJsonObject> Manifest;
+			if (!Result.ManifestJson.IsEmpty())
+			{
+				const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Result.ManifestJson);
+				if (FJsonSerializer::Deserialize(Reader, Manifest) && Manifest.IsValid())
+				{
+					const TSharedPtr<FJsonObject>* RegistrationStatus = nullptr;
+					if (Manifest->TryGetObjectField(TEXT("registrationStatus"), RegistrationStatus) && RegistrationStatus && (*RegistrationStatus).IsValid())
+					{
+						Object->SetObjectField(TEXT("registrationStatus"), *RegistrationStatus);
+					}
+				}
+			}
+			return Object;
+		}
+
+		bool TryBuildOfficialDraftRequest(
+			const FString& TaskId,
+			const TaskAtlasService::FMakeCompositeResult& CompositeResult,
+			TaskAtlasService::FOfficialToolsetDraftRequest& OutRequest,
+			TSharedPtr<FJsonObject>& OutFailureContent)
+		{
+			TSharedPtr<FJsonObject> DescribeArgs = MakeShared<FJsonObject>();
+			DescribeArgs->SetStringField(TEXT("taskId"), TaskId);
+			FUnrealMcpExecutionResult DescribeResult;
+			if (!TryExecuteTaskAtlasTool(TEXT("unreal.task_describe"), *DescribeArgs, DescribeResult)
+				|| DescribeResult.bIsError
+				|| !DescribeResult.StructuredContent.IsValid())
+			{
+				OutFailureContent = MakeOfficialDraftFailureContent(
+					TEXT("task_describe_failed"),
+					DescribeResult.Text.IsEmpty() ? FString(TEXT("Task Atlas task_describe failed.")) : DescribeResult.Text);
+				return false;
+			}
+
+			const TSharedPtr<FJsonObject>* TaskObjectPtr = nullptr;
+			if (!DescribeResult.StructuredContent->TryGetObjectField(TEXT("task"), TaskObjectPtr) || !TaskObjectPtr || !(*TaskObjectPtr).IsValid())
+			{
+				OutFailureContent = MakeOfficialDraftFailureContent(TEXT("task_describe_missing_task"), TEXT("Task Atlas task_describe did not return a task object."));
+				return false;
+			}
+			const TSharedPtr<FJsonObject> TaskObject = *TaskObjectPtr;
+
+			FString ToolId;
+			if (CompositeResult.ToolName.StartsWith(TEXT("user."), ESearchCase::CaseSensitive))
+			{
+				ToolId = CompositeResult.ToolName.RightChop(5);
+			}
+			const FString Label = GetJsonStringField(TaskObject, TEXT("label"), TaskId);
+			if (ToolId.IsEmpty())
+			{
+				ToolId = TaskAtlasService::MakeAtlasToolId(Label, TaskId);
+			}
+
+			FString Description = GetJsonStringField(TaskObject, TEXT("aiSummaryText"));
+			if (Description.IsEmpty())
+			{
+				Description = GetJsonStringField(TaskObject, TEXT("userIntentText"));
+			}
+			if (Description.IsEmpty())
+			{
+				Description = FString::Printf(TEXT("Official ToolsetRegistry draft generated from Task Atlas task %s."), *TaskId);
+			}
+
+			OutRequest = TaskAtlasService::FOfficialToolsetDraftRequest();
+			OutRequest.ToolId = ToolId;
+			OutRequest.Title = Label.IsEmpty() ? ToolId : Label;
+			OutRequest.Description = Description;
+			OutRequest.TaskId = GetJsonStringField(TaskObject, TEXT("taskId"), TaskId);
+			OutRequest.ReplayEligibility = CompositeResult.ReplayStatus.IsEmpty() ? FString(TEXT("preview_ready")) : CompositeResult.ReplayStatus;
+			OutRequest.ReplayUnavailableReason = GetJsonStringField(TaskObject, TEXT("replayUnavailableReason"));
+			OutRequest.CriticalPath = GetJsonStringArrayField(TaskObject, TEXT("criticalPath"));
+			OutRequest.StepRefs = MakeOfficialStepRefs(TaskObject);
+			OutRequest.VisibleCoreToolNames = VisibleCoreToolNames();
+			return true;
+		}
+#else
+		TSharedPtr<FJsonObject> MakeOfficialDraftUnsupportedContent()
+		{
+			TSharedPtr<FJsonObject> Object = MakeShared<FJsonObject>();
+			Object->SetBoolField(TEXT("supported"), false);
+			Object->SetStringField(TEXT("reason"), TEXT("Official toolsets require UE5.8+"));
+			return Object;
+		}
+#endif
 
 		TSharedPtr<FJsonObject> MakeDeleteContent(
 			const FString& ToolName,
@@ -669,14 +863,45 @@ namespace UnrealMcp
 					return true;
 				}
 
-				const UnrealMcp::TaskAtlasService::FMakeCompositeResult Result = UnrealMcp::TaskAtlasService::MakeComposite(Request);
+				const bool bEmitOfficial = GetBoolArgument(Arguments, TEXT("emitOfficial"), false);
+				UnrealMcp::TaskAtlasService::FMakeCompositeResult Result = UnrealMcp::TaskAtlasService::MakeComposite(Request);
 				FString OutcomeText = TEXT("unknown");
 				if (Result.StructuredContent.IsValid())
 				{
 					Result.StructuredContent->TryGetStringField(TEXT("outcome"), OutcomeText);
 				}
+				FString OfficialDraftText;
+				if (bEmitOfficial && Result.Outcome == UnrealMcp::TaskAtlasService::EMakeCompositeOutcome::CompositeWritten && Result.StructuredContent.IsValid())
+				{
+#if UNREALMCP_HAS_OFFICIAL_TOOLSETS
+					TSharedPtr<FJsonObject> OfficialDraftContent;
+					UnrealMcp::TaskAtlasService::FOfficialToolsetDraftRequest OfficialRequest;
+					if (TryBuildOfficialDraftRequest(Request.TaskId, Result, OfficialRequest, OfficialDraftContent))
+					{
+						const UnrealMcp::TaskAtlasService::FOfficialToolsetDraftResult OfficialResult =
+							UnrealMcp::TaskAtlasService::GenerateOfficialToolsetDraft(OfficialRequest);
+						OfficialDraftContent = MakeOfficialDraftContent(OfficialResult);
+						OfficialDraftText = OfficialResult.bSucceeded
+							? FString::Printf(TEXT("; official draft generated at %s"), *OfficialResult.GeneratedDir)
+							: FString::Printf(TEXT("; official draft failed: %s"), *OfficialResult.ErrorMessage);
+					}
+					else
+					{
+						FString ErrorMessage;
+						if (OfficialDraftContent.IsValid())
+						{
+							OfficialDraftContent->TryGetStringField(TEXT("errorMessage"), ErrorMessage);
+						}
+						OfficialDraftText = FString::Printf(TEXT("; official draft failed: %s"), *ErrorMessage);
+					}
+					Result.StructuredContent->SetObjectField(TEXT("officialDraft"), OfficialDraftContent.IsValid() ? OfficialDraftContent : MakeOfficialDraftFailureContent(TEXT("unknown"), TEXT("Official draft generation failed.")));
+#else
+					Result.StructuredContent->SetObjectField(TEXT("officialDraft"), MakeOfficialDraftUnsupportedContent());
+					OfficialDraftText = TEXT("; official draft skipped: Official toolsets require UE5.8+");
+#endif
+				}
 				const FString Text = Result.ErrorMessage.IsEmpty()
-					? FString::Printf(TEXT("Task Atlas make composite outcome: %s"), *OutcomeText)
+					? FString::Printf(TEXT("Task Atlas make composite outcome: %s%s"), *OutcomeText, *OfficialDraftText)
 					: Result.ErrorMessage;
 				OutResult = MakeExecutionResult(Text, Result.StructuredContent, IsMakeError(Result.Outcome));
 				return true;

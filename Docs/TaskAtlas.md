@@ -104,6 +104,48 @@ and promotion sources. It is local-first: runtime task files live under
   shows the composite kind and scaffold directory, and deletes only those
   filtered composites after confirmation plus user-registry-root path checks.
 
+## v0.33 UE5.8 Official Toolset Draft Option
+
+`unreal.task_atlas_make_composite` accepts an optional `emitOfficial` boolean.
+It defaults to `false` and does not change the required fields; `taskId` remains
+the only required input. When `emitOfficial=true` and the composite outcome is
+`CompositeWritten`, UE5.8 builds also generate an official ToolsetRegistry
+Python draft under `Saved/UnrealMcp/OfficialToolsetDrafts/` from the same task
+JSON, critical path, ordered `stepRefs`, replay metadata, and visible core-tool
+set used by Make Tool Set. UE5.6 and UE5.7 keep the schema property but compile
+the feature out; the response reports `officialDraft.supported=false` with the
+reason `Official toolsets require UE5.8+`.
+
+Official draft generation is non-fatal. The composite Python user tool is not
+rolled back if the official draft build, validator, or ToolsetRegistry
+registration fails. On success or failure, the existing make-composite
+structured content gains an `officialDraft` child object:
+
+```json
+{
+  "supported": true,
+  "succeeded": true,
+  "generatedDir": "Saved/UnrealMcp/OfficialToolsetDrafts/<toolId>",
+  "modulePath": ".../<module>.py",
+  "manifestPath": ".../manifest.json",
+  "moduleName": "<module>",
+  "className": "<ToolsetDefinition class>",
+  "toolsetName": "Temp.UnrealMcp.OfficialToolsetDrafts...",
+  "mainPySha256": "<sha256>",
+  "toolNames": ["step0_editor_status"],
+  "validatorIssues": [],
+  "registrationStatus": {"state": "registered"},
+  "failureDiagnosticPath": "",
+  "errorCode": "",
+  "errorMessage": ""
+}
+```
+
+The Task Atlas window exposes the same option as a UE5.8-only checkbox labeled
+`Also generate official toolset (UE5.8)` next to `Make Tool Set`. It reuses the
+existing blocked-task disable gate and only runs the official draft path after
+the composite write succeeds.
+
 `unreal.task_label_backfill` accepts:
 
 ```json

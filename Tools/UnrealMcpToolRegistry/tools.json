@@ -11460,6 +11460,11 @@
             "default": false,
             "description": "Developer escape hatch. Still requires AssistantRun approval when invoked by AI; UI must not set this."
           },
+          "emitOfficial": {
+            "type": "boolean",
+            "default": false,
+            "description": "UE5.8 only: also generate an official ToolsetRegistry Python draft for this composite under Saved/UnrealMcp/OfficialToolsetDrafts/. Inert on UE5.6/5.7."
+          },
           "overrideStepArgs": {
             "type": "array",
             "description": "Optional strict override bridge for developer tools. Each item carries JSON as a string to keep the MCP schema closed.",

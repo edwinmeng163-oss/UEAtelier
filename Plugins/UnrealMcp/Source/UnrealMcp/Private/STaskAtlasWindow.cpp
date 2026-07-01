@@ -18,6 +18,7 @@
 #include "Serialization/JsonWriter.h"
 #include "Styling/AppStyle.h"
 #include "Widgets/Input/SButton.h"
+#include "Widgets/Input/SCheckBox.h"
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SBox.h"
@@ -1154,6 +1155,10 @@ namespace UnrealMcp::TaskAtlasComposite
 
 namespace TaskAtlasWindow
 {
+#if UNREALMCP_HAS_OFFICIAL_TOOLSETS
+	bool bEmitOfficialToolsetDraft = false;
+#endif
+
 	FString JsonObjectToPrettyString(const TSharedPtr<FJsonObject>& Object)
 	{
 		if (!Object.IsValid())
@@ -1254,6 +1259,118 @@ namespace TaskAtlasWindow
 		}
 		return Model;
 	}
+
+#if UNREALMCP_HAS_OFFICIAL_TOOLSETS
+	TArray<TSharedPtr<FJsonValue>> MakeOfficialStepRefs(const TSharedPtr<FJsonObject>& TaskObject)
+	{
+		TArray<TSharedPtr<FJsonValue>> StepRefs;
+		const TArray<TSharedPtr<FJsonValue>>* RawStepRefs = nullptr;
+		if (!TaskObject.IsValid() || !TaskObject->TryGetArrayField(TEXT("stepRefs"), RawStepRefs) || !RawStepRefs)
+		{
+			return StepRefs;
+		}
+		StepRefs.Reserve(RawStepRefs->Num());
+		for (int32 Index = 0; Index < RawStepRefs->Num(); ++Index)
+		{
+			const TSharedPtr<FJsonValue>& StepValue = (*RawStepRefs)[Index];
+			const TSharedPtr<FJsonObject> RawStep = StepValue.IsValid() && StepValue->Type == EJson::Object ? StepValue->AsObject() : nullptr;
+			if (!RawStep.IsValid())
+			{
+				continue;
+			}
+
+			TSharedPtr<FJsonObject> Step = MakeShared<FJsonObject>();
+			double Ordinal = static_cast<double>(Index);
+			RawStep->TryGetNumberField(TEXT("ordinal"), Ordinal);
+			Step->SetNumberField(TEXT("ordinal"), Ordinal);
+			for (const TCHAR* FieldName : { TEXT("tool"), TEXT("eventId"), TEXT("captureStatus"), TEXT("captureRef"), TEXT("captureSummary"), TEXT("policyClassAtCapture") })
+			{
+				const FString Value = GetStringField(RawStep, FieldName).TrimStartAndEnd();
+				if (!Value.IsEmpty())
+				{
+					Step->SetStringField(FieldName, Value);
+				}
+			}
+			StepRefs.Add(MakeShared<FJsonValueObject>(Step));
+		}
+		return StepRefs;
+	}
+
+	TSet<FString> VisibleCoreToolNames()
+	{
+		TSet<FString> VisibleTools;
+		for (const UnrealMcp::FToolRegistryEntry& Entry : UnrealMcp::GetToolRegistryEntries())
+		{
+			if (Entry.Exposure == UnrealMcp::EToolExposure::Visible && Entry.Name.StartsWith(TEXT("unreal."), ESearchCase::CaseSensitive))
+			{
+				VisibleTools.Add(Entry.Name);
+			}
+		}
+		return VisibleTools;
+	}
+
+	bool TryBuildOfficialDraftRequest(
+		const STaskAtlasWindow::FWorkflowRow& Row,
+		const UnrealMcp::TaskAtlasService::FMakeCompositeResult& CompositeResult,
+		UnrealMcp::TaskAtlasService::FOfficialToolsetDraftRequest& OutRequest,
+		FString& OutFailureReason)
+	{
+		if (!Row.Json.IsValid())
+		{
+			OutFailureReason = TEXT("Selected Task Atlas row does not include task JSON.");
+			return false;
+		}
+
+		FString ToolId;
+		if (CompositeResult.ToolName.StartsWith(TEXT("user."), ESearchCase::CaseSensitive))
+		{
+			ToolId = CompositeResult.ToolName.RightChop(5);
+		}
+		if (ToolId.IsEmpty())
+		{
+			ToolId = UnrealMcp::TaskAtlasService::MakeAtlasToolId(Row.Label.TrimStartAndEnd(), Row.TaskId);
+		}
+
+		FString Description = GetStringField(Row.Json, TEXT("aiSummaryText")).TrimStartAndEnd();
+		if (Description.IsEmpty())
+		{
+			Description = GetStringField(Row.Json, TEXT("userIntentText")).TrimStartAndEnd();
+		}
+		if (Description.IsEmpty())
+		{
+			Description = FString::Printf(TEXT("Official ToolsetRegistry draft generated from Task Atlas task %s."), *Row.TaskId);
+		}
+
+		OutRequest = UnrealMcp::TaskAtlasService::FOfficialToolsetDraftRequest();
+		OutRequest.ToolId = ToolId;
+		OutRequest.Title = Row.Label.TrimStartAndEnd().IsEmpty() ? ToolId : Row.Label.TrimStartAndEnd();
+		OutRequest.Description = Description;
+		OutRequest.TaskId = Row.TaskId;
+		OutRequest.ReplayEligibility = CompositeResult.ReplayStatus.IsEmpty()
+			? EligibilityToText(Row.Eligibility)
+			: CompositeResult.ReplayStatus;
+		OutRequest.ReplayUnavailableReason = Row.ReplayUnavailableReason;
+		OutRequest.CriticalPath = Row.CriticalPath.Num() > 0
+			? Row.CriticalPath
+			: GetStringArrayField(Row.Json, TEXT("criticalPath"));
+		OutRequest.StepRefs = MakeOfficialStepRefs(Row.Json);
+		OutRequest.VisibleCoreToolNames = VisibleCoreToolNames();
+		return true;
+	}
+
+	FString OfficialDraftStatusText(const UnrealMcp::TaskAtlasService::FOfficialToolsetDraftResult& Result)
+	{
+		if (Result.bSucceeded)
+		{
+			return FString::Printf(TEXT("; official draft %s generated at %s"), *Result.ToolsetName, *Result.GeneratedDir);
+		}
+		if (!Result.FailureDiagnosticPath.IsEmpty())
+		{
+			return FString::Printf(TEXT("; official draft failed: %s. See %s"), *Result.ErrorMessage, *Result.FailureDiagnosticPath);
+		}
+		return FString::Printf(TEXT("; official draft failed: %s"), *Result.ErrorMessage);
+	}
+#endif
 
 	int32 WorkflowSortRank(const STaskAtlasWindow::FWorkflowRow& Row)
 	{
@@ -1686,11 +1803,31 @@ FReply STaskAtlasWindow::HandleMakeToolClicked(FWorkflowRow Row)
 	switch (Result.Outcome)
 	{
 	case UnrealMcp::TaskAtlasService::EMakeCompositeOutcome::CompositeWritten:
-		SetStatus(FString::Printf(
+	{
+		FString Status = FString::Printf(
 			TEXT("Composite %s written at %s"),
 			*(Result.ToolName.IsEmpty() ? ExpectedToolName : Result.ToolName),
-			*Result.GeneratedDir));
+			*Result.GeneratedDir);
+#if UNREALMCP_HAS_OFFICIAL_TOOLSETS
+		if (TaskAtlasWindow::bEmitOfficialToolsetDraft)
+		{
+			UnrealMcp::TaskAtlasService::FOfficialToolsetDraftRequest OfficialRequest;
+			FString FailureReason;
+			if (TaskAtlasWindow::TryBuildOfficialDraftRequest(Row, Result, OfficialRequest, FailureReason))
+			{
+				const UnrealMcp::TaskAtlasService::FOfficialToolsetDraftResult OfficialResult =
+					UnrealMcp::TaskAtlasService::GenerateOfficialToolsetDraft(OfficialRequest);
+				Status += TaskAtlasWindow::OfficialDraftStatusText(OfficialResult);
+			}
+			else
+			{
+				Status += FString::Printf(TEXT("; official draft failed: %s"), *FailureReason);
+			}
+		}
+#endif
+		SetStatus(Status);
 		break;
+	}
 	case UnrealMcp::TaskAtlasService::EMakeCompositeOutcome::DocumentOnly:
 		SetStatus(FString::Printf(
 			TEXT("Document-only (eligibility=%s) at %s"),
@@ -2179,6 +2316,26 @@ TSharedRef<SWidget> STaskAtlasWindow::BuildWorkflowRow(const FWorkflowRow& Row)
 					.Text(FText::FromString(Row.bPinned ? TEXT("Unpin") : TEXT("Pin")))
 					.OnClicked(this, &STaskAtlasWindow::HandlePinClicked, Row.TaskId, !Row.bPinned)
 				]
+#if UNREALMCP_HAS_OFFICIAL_TOOLSETS
+				+ SWrapBox::Slot()
+				[
+					SNew(SCheckBox)
+					.IsChecked_Lambda([]()
+					{
+						return TaskAtlasWindow::bEmitOfficialToolsetDraft ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+					})
+					.IsEnabled(Row.Eligibility != UnrealMcp::TaskAtlasService::EEligibility::Blocked)
+					.ToolTipText(LOCTEXT("EmitOfficialToolsetTooltip", "Also generate an official ToolsetRegistry Python draft for UE5.8."))
+					.OnCheckStateChanged_Lambda([](ECheckBoxState NewState)
+					{
+						TaskAtlasWindow::bEmitOfficialToolsetDraft = NewState == ECheckBoxState::Checked;
+					})
+					[
+						SNew(STextBlock)
+						.Text(LOCTEXT("EmitOfficialToolset", "Also generate official toolset (UE5.8)"))
+					]
+				]
+#endif
 				+ SWrapBox::Slot()
 				[
 					SNew(SButton)
