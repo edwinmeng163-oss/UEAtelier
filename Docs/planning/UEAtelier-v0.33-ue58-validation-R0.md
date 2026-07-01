@@ -361,9 +361,18 @@ gate-exclusion builds green; tool count stays 190.
   ToolsetRegistry. Proven by in-process Automation test
   `UnrealMcp.OfficialToolset.Generation`
   (generate → validate → register → `execute_tool` → audit → rollback).
-- Chunk C2 — NEXT: wire `emitOfficial` onto the existing `task_atlas_make_composite`
-  descriptor + the Make Tool Set button/window (no new tool).
-- Chunk C3 — C++ `UToolsetDefinition` path (decision #6: generate → build → restart).
+- Chunk C2 (`7e0c1d7`) — DONE: wired opt-in `emitOfficial` onto the existing
+  `task_atlas_make_composite` descriptor (registry + mirror + registrar in parity,
+  no new tool) + a compat-gated "Also generate official toolset (UE5.8)" checkbox on
+  the Make Tool Set row. On `CompositeWritten` it builds an `FOfficialToolsetDraftRequest`
+  from the task JSON and routes into C1's `GenerateOfficialToolsetDraft`, attaching an
+  `officialDraft` child to the make-composite structured content. Non-fatal (composite
+  never rolled back on draft failure); UE5.6/5.7 keep the schema prop but report
+  `officialDraft.supported=false`. Proven by Automation test
+  `UnrealMcp.OfficialToolset.MakeCompositeWired`
+  (generate → validate → register → delegate through `call_tool` → policy allow → audit
+  → rollback) + live `:8000` round-trip smoke.
+- Chunk C3 — NEXT: C++ `UToolsetDefinition` path (decision #6: generate → build → restart).
 - Chunk C4 — AgentSkill promotion (instruction-only) + manifest `schemaHash` drift
   detector + docs/freshness sweep.
 
