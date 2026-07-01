@@ -91,22 +91,47 @@ bool FUnrealMcpVettedToolsetVerificationTest::RunTest(const FString& Parameters)
 	(void)Parameters;
 
 	const FString MainPy = TEXT("print('ok')\n");
+	const FString MainPySha = UnrealMcp::HashUtils::Sha256LowerHexFromUtf8(MainPy);
 	UnrealMcp::FVettedToolsetMarker Marker;
 	Marker.bVetted = true;
-	Marker.MainPySha256 = UnrealMcp::HashUtils::Sha256LowerHexFromUtf8(MainPy);
+	Marker.MainPySha256 = MainPySha;
 
 	const UnrealMcp::FVettedToolsetVerificationResult Match = UnrealMcp::VerifyVettedToolset_Pure(Marker, MainPy);
 	TestTrue(TEXT("exact hash match is vetted"), Match.bVetted);
 	TestEqual(TEXT("exact hash match reason"), Match.Reason, TEXT("vetted"));
 
+	const UnrealMcp::FVettedToolsetVerificationResult ShaMatch = UnrealMcp::VerifyVettedToolsetSha_Pure(Marker, MainPySha);
+	TestTrue(TEXT("precomputed sha match is vetted"), ShaMatch.bVetted);
+	TestEqual(TEXT("precomputed sha match reason"), ShaMatch.Reason, TEXT("vetted"));
+
 	const UnrealMcp::FVettedToolsetVerificationResult Mismatch = UnrealMcp::VerifyVettedToolset_Pure(Marker, TEXT("print('changed')\n"));
 	TestFalse(TEXT("changed content is not vetted"), Mismatch.bVetted);
 	TestEqual(TEXT("changed content reason"), Mismatch.Reason, TEXT("hash_mismatch"));
+
+	const UnrealMcp::FVettedToolsetVerificationResult ShaMismatch = UnrealMcp::VerifyVettedToolsetSha_Pure(Marker, UnrealMcp::HashUtils::Sha256LowerHexFromUtf8(TEXT("print('changed')\n")));
+	TestFalse(TEXT("changed sha is not vetted"), ShaMismatch.bVetted);
+	TestEqual(TEXT("changed sha reason"), ShaMismatch.Reason, TEXT("hash_mismatch"));
 
 	Marker.MainPySha256.Reset();
 	const UnrealMcp::FVettedToolsetVerificationResult MissingHash = UnrealMcp::VerifyVettedToolset_Pure(Marker, MainPy);
 	TestFalse(TEXT("empty stored hash is not vetted"), MissingHash.bVetted);
 	TestEqual(TEXT("empty stored hash reason"), MissingHash.Reason, TEXT("hash_missing"));
+
+	const UnrealMcp::FVettedToolsetVerificationResult ShaMissingHash = UnrealMcp::VerifyVettedToolsetSha_Pure(Marker, MainPySha);
+	TestFalse(TEXT("empty stored hash is not vetted with sha"), ShaMissingHash.bVetted);
+	TestEqual(TEXT("empty stored hash sha reason"), ShaMissingHash.Reason, TEXT("hash_missing"));
+
+	Marker.bVetted = false;
+	Marker.MainPySha256 = MainPySha;
+	const UnrealMcp::FVettedToolsetVerificationResult NotMarked = UnrealMcp::VerifyVettedToolsetSha_Pure(Marker, MainPySha);
+	TestFalse(TEXT("not-marked sha is not vetted"), NotMarked.bVetted);
+	TestEqual(TEXT("not-marked sha reason"), NotMarked.Reason, TEXT("not_marked"));
+
+	Marker.bVetted = true;
+	const UnrealMcp::FVettedToolsetVerificationResult DelegatedString = UnrealMcp::VerifyVettedToolset_Pure(Marker, MainPy);
+	const UnrealMcp::FVettedToolsetVerificationResult DelegatedSha = UnrealMcp::VerifyVettedToolsetSha_Pure(Marker, MainPySha);
+	TestEqual(TEXT("string verifier delegates to sha verifier vetted flag"), DelegatedString.bVetted, DelegatedSha.bVetted);
+	TestEqual(TEXT("string verifier delegates to sha verifier reason"), DelegatedString.Reason, DelegatedSha.Reason);
 
 	return true;
 }
@@ -121,16 +146,26 @@ bool FUnrealMcpVettedToolsetScopeTest::RunTest(const FString& Parameters)
 	(void)Parameters;
 
 	TestFalse(TEXT("scope starts inactive"), UnrealMcp::FVettedToolsetScope::IsActive());
+	TestEqual(TEXT("inactive tool id empty"), UnrealMcp::FVettedToolsetScope::ActiveToolId(), FString());
+	TestEqual(TEXT("inactive verified sha empty"), UnrealMcp::FVettedToolsetScope::ActiveVerifiedSha(), FString());
 	{
-		UnrealMcp::FVettedToolsetScope Outer(TEXT("user.outer"));
+		UnrealMcp::FVettedToolsetScope Outer(TEXT("user.outer"), TEXT("outer-sha"));
 		TestTrue(TEXT("scope active inside outer"), UnrealMcp::FVettedToolsetScope::IsActive());
+		TestEqual(TEXT("outer tool id active"), UnrealMcp::FVettedToolsetScope::ActiveToolId(), TEXT("user.outer"));
+		TestEqual(TEXT("outer sha active"), UnrealMcp::FVettedToolsetScope::ActiveVerifiedSha(), TEXT("outer-sha"));
 		{
-			UnrealMcp::FVettedToolsetScope Inner(TEXT("user.inner"));
+			UnrealMcp::FVettedToolsetScope Inner(TEXT("user.inner"), TEXT("inner-sha"));
 			TestTrue(TEXT("scope remains active inside nested"), UnrealMcp::FVettedToolsetScope::IsActive());
+			TestEqual(TEXT("inner tool id active"), UnrealMcp::FVettedToolsetScope::ActiveToolId(), TEXT("user.inner"));
+			TestEqual(TEXT("inner sha active"), UnrealMcp::FVettedToolsetScope::ActiveVerifiedSha(), TEXT("inner-sha"));
 		}
 		TestTrue(TEXT("scope remains active after nested exits"), UnrealMcp::FVettedToolsetScope::IsActive());
+		TestEqual(TEXT("outer tool id restored"), UnrealMcp::FVettedToolsetScope::ActiveToolId(), TEXT("user.outer"));
+		TestEqual(TEXT("outer sha restored"), UnrealMcp::FVettedToolsetScope::ActiveVerifiedSha(), TEXT("outer-sha"));
 	}
 	TestFalse(TEXT("scope inactive after destruction"), UnrealMcp::FVettedToolsetScope::IsActive());
+	TestEqual(TEXT("destroyed scope tool id empty"), UnrealMcp::FVettedToolsetScope::ActiveToolId(), FString());
+	TestEqual(TEXT("destroyed scope sha empty"), UnrealMcp::FVettedToolsetScope::ActiveVerifiedSha(), FString());
 
 	return true;
 }

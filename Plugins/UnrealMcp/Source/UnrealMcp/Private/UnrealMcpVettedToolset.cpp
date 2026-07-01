@@ -6,7 +6,8 @@ namespace UnrealMcp
 {
 	namespace
 	{
-		static thread_local int32 GVettedToolsetScopeDepth = 0;
+		static thread_local TArray<FString> GVettedToolsetToolIdStack;
+		static thread_local TArray<FString> GVettedToolsetShaStack;
 
 		const TCHAR* VettedToolsetMarkerField()
 		{
@@ -77,6 +78,13 @@ namespace UnrealMcp
 		const FVettedToolsetMarker& Marker,
 		const FString& LiveMainPyUtf8)
 	{
+		return VerifyVettedToolsetSha_Pure(Marker, HashUtils::Sha256LowerHexFromUtf8(LiveMainPyUtf8));
+	}
+
+	FVettedToolsetVerificationResult VerifyVettedToolsetSha_Pure(
+		const FVettedToolsetMarker& Marker,
+		const FString& LiveMainPyShaLowerHex)
+	{
 		if (!Marker.bVetted)
 		{
 			return { false, TEXT("not_marked") };
@@ -87,8 +95,7 @@ namespace UnrealMcp
 			return { false, TEXT("hash_missing") };
 		}
 
-		const FString LiveSha256 = HashUtils::Sha256LowerHexFromUtf8(LiveMainPyUtf8);
-		if (!Marker.MainPySha256.Equals(LiveSha256, ESearchCase::CaseSensitive))
+		if (!Marker.MainPySha256.Equals(LiveMainPyShaLowerHex.TrimStartAndEnd().ToLower(), ESearchCase::CaseSensitive))
 		{
 			return { false, TEXT("hash_mismatch") };
 		}
@@ -96,19 +103,38 @@ namespace UnrealMcp
 		return { true, TEXT("vetted") };
 	}
 
-	FVettedToolsetScope::FVettedToolsetScope(const FString& InToolId)
+	FVettedToolsetScope::FVettedToolsetScope(const FString& InToolId, const FString& InVerifiedSha)
 		: ToolId(InToolId)
+		, VerifiedSha(InVerifiedSha)
 	{
-		++GVettedToolsetScopeDepth;
+		GVettedToolsetToolIdStack.Add(ToolId);
+		GVettedToolsetShaStack.Add(VerifiedSha);
 	}
 
 	FVettedToolsetScope::~FVettedToolsetScope()
 	{
-		--GVettedToolsetScopeDepth;
+		if (GVettedToolsetToolIdStack.Num() > 0)
+		{
+			GVettedToolsetToolIdStack.Pop(EAllowShrinking::No);
+		}
+		if (GVettedToolsetShaStack.Num() > 0)
+		{
+			GVettedToolsetShaStack.Pop(EAllowShrinking::No);
+		}
 	}
 
 	bool FVettedToolsetScope::IsActive()
 	{
-		return GVettedToolsetScopeDepth > 0;
+		return GVettedToolsetToolIdStack.Num() > 0;
+	}
+
+	FString FVettedToolsetScope::ActiveToolId()
+	{
+		return GVettedToolsetToolIdStack.Num() > 0 ? GVettedToolsetToolIdStack.Last() : FString();
+	}
+
+	FString FVettedToolsetScope::ActiveVerifiedSha()
+	{
+		return GVettedToolsetShaStack.Num() > 0 ? GVettedToolsetShaStack.Last() : FString();
 	}
 }

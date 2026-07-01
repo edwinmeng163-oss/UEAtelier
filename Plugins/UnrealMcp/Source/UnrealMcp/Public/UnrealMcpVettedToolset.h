@@ -30,19 +30,25 @@ namespace UnrealMcp
 	UNREALMCP_API FVettedToolsetVerificationResult VerifyVettedToolset_Pure(
 		const FVettedToolsetMarker& Marker,
 		const FString& LiveMainPyUtf8);
+	UNREALMCP_API FVettedToolsetVerificationResult VerifyVettedToolsetSha_Pure(
+		const FVettedToolsetMarker& Marker,
+		const FString& LiveMainPyShaLowerHex);
 
 	class UNREALMCP_API FVettedToolsetScope
 	{
 	public:
-		explicit FVettedToolsetScope(const FString& InToolId);
+		explicit FVettedToolsetScope(const FString& InToolId, const FString& InVerifiedSha = FString());
 		~FVettedToolsetScope();
 
 		FVettedToolsetScope(const FVettedToolsetScope&) = delete;
 		FVettedToolsetScope& operator=(const FVettedToolsetScope&) = delete;
 
 		static bool IsActive();
+		static FString ActiveToolId();
+		static FString ActiveVerifiedSha();
 
 	private:
 		FString ToolId;
+		FString VerifiedSha;
 	};
 }

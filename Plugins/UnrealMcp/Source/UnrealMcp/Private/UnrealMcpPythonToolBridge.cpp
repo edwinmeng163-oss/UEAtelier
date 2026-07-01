@@ -6,6 +6,7 @@
 #include "UnrealMcpToolHandlerRegistry.h"
 #include "UnrealMcpUserToolLock.h"
 #include "UnrealMcpUserToolRegistry.h"
+#include "UnrealMcpVettedToolset.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -507,9 +508,12 @@ namespace UnrealMcpPythonToolBridge
 			return MakeBridgeError(HandlerEntry, UserExecutionLocks.GetFailureReason());
 		}
 
+		const UserRegistry::FUserToolEntry* UserToolEntry = HandlerEntry.bLoadedFromUserRegistry
+			? UserRegistry::FindUserTool(HandlerEntry.HandlerName)
+			: nullptr;
 		if (HandlerEntry.bLoadedFromUserRegistry
 			&& !HandlerEntry.bUserToolLocksAlreadyHeld
-			&& !UserRegistry::FindUserTool(HandlerEntry.HandlerName))
+			&& !UserToolEntry)
 		{
 			return MakeBridgeError(HandlerEntry, FString::Printf(TEXT("User tool '%s' is no longer loaded in the user registry."), *HandlerEntry.HandlerName));
 		}
@@ -622,6 +626,17 @@ namespace UnrealMcpPythonToolBridge
 				AbsoluteHandlerPath,
 				ActualSha256,
 				&HandlerResolution);
+		}
+
+		TUniquePtr<FVettedToolsetScope> VettedScope;
+		if (UserToolEntry)
+		{
+			const FVettedToolsetMarker Marker = DeserializeVettedToolsetMarker(UserToolEntry->ToolJson);
+			const FVettedToolsetVerificationResult VettedResult = VerifyVettedToolsetSha_Pure(Marker, ActualSha256);
+			if (VettedResult.bVetted)
+			{
+				VettedScope = MakeUnique<FVettedToolsetScope>(HandlerEntry.HandlerName, ActualSha256);
+			}
 		}
 
 		FPythonCommandEx PythonCommand;

@@ -9,12 +9,23 @@
 #include "Misc/Paths.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
+#include "Templates/Function.h"
+#include "UnrealMcpActivityLog.h"
 #include "UnrealMcpCallToolLibrary.h"
 #include "UnrealMcpModule.h"
 #include "UnrealMcpPythonToolBridge.h"
 #include "UnrealMcpToolHandlerRegistry.h"
 #include "UnrealMcpUserToolLock.h"
 #include "UnrealMcpUserToolRegistry.h"
+#include "UnrealMcpVettedToolset.h"
+
+namespace UnrealMcpCallToolLibraryLocal
+{
+	FString CallToolWithAuditWriter(
+		const FString& ToolName,
+		const FString& ArgumentsJson,
+		TFunctionRef<bool(const UnrealMcp::FActivityLogEvent&, FString&)> AuditWriter);
+}
 
 namespace UnrealMcpCallToolLibraryTests
 {
@@ -173,6 +184,11 @@ bool FUnrealMcpCallToolForceDryRunTest::RunTest(const FString& Parameters)
 
 	TestEqual(TEXT("policy force dry run"), UnrealMcpCallToolLibraryTests::GetNestedString(Payload, TEXT("meta"), TEXT("policyDecision")), TEXT("force_dry_run"));
 	TestTrue(TEXT("forced dry run true"), UnrealMcpCallToolLibraryTests::GetNestedBool(Payload, TEXT("meta"), TEXT("forcedDryRun")));
+	TestTrue(TEXT("structured content present"), Payload->HasTypedField<EJson::Object>(TEXT("structuredContent")));
+	if (Payload->HasTypedField<EJson::Object>(TEXT("structuredContent")))
+	{
+		TestTrue(TEXT("dryRun was injected into handler arguments"), Payload->GetObjectField(TEXT("structuredContent"))->GetBoolField(TEXT("dryRun")));
+	}
 	return true;
 }
 
@@ -209,6 +225,150 @@ bool FUnrealMcpCallToolTruncationTest::RunTest(const FString& Parameters)
 {
 	(void)Parameters;
 	AddInfo(TEXT("Skipped: no deterministic visible core tool currently returns more than 20000 text characters without mutating editor state."));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FUnrealMcpCallToolVettedRealAuditTest,
+	"UnrealMcp.CallTool.VettedRealAudit",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FUnrealMcpCallToolVettedRealAuditTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	const FString VerifiedSha = TEXT("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
+	TArray<UnrealMcp::FActivityLogEvent> Events;
+	TSharedPtr<FJsonObject> Payload;
+	{
+		UnrealMcp::FVettedToolsetScope Scope(TEXT("user.test_vetted"), VerifiedSha);
+		TestTrue(
+			TEXT("payload parses"),
+			UnrealMcpCallToolLibraryTests::ParseCallToolPayload(
+				UnrealMcpCallToolLibraryLocal::CallToolWithAuditWriter(
+					TEXT("unreal.code_apply_change"),
+					TEXT("{\"previewId\":\"missing_vetted_preview\",\"dryRun\":false,\"token\":\"secret-token-value\"}"),
+					[&Events](const UnrealMcp::FActivityLogEvent& Event, FString& FailureReason)
+					{
+						FailureReason.Reset();
+						Events.Add(Event);
+						return true;
+					}),
+				Payload));
+	}
+
+	if (!Payload.IsValid())
+	{
+		return false;
+	}
+
+	bool bIsError = false;
+	Payload->TryGetBoolField(TEXT("isError"), bIsError);
+	TestTrue(TEXT("harmless real handler failure is surfaced"), bIsError);
+	TestTrue(TEXT("handler attempted missing preview id"), Payload->GetStringField(TEXT("text")).Contains(TEXT("Preview artifact not found")));
+	TestEqual(TEXT("policy allows vetted real"), UnrealMcpCallToolLibraryTests::GetNestedString(Payload, TEXT("meta"), TEXT("policyDecision")), TEXT("allow_vetted_real"));
+	TestFalse(TEXT("forced dry run false"), UnrealMcpCallToolLibraryTests::GetNestedBool(Payload, TEXT("meta"), TEXT("forcedDryRun")));
+	TestEqual(TEXT("one vetted audit event"), Events.Num(), 1);
+	if (Events.Num() == 1)
+	{
+		TestEqual(TEXT("audit event kind"), Events[0].EventKind, TEXT("vetted_real_write"));
+		TestTrue(TEXT("audit payload present"), Events[0].Payload.IsValid());
+		if (Events[0].Payload.IsValid())
+		{
+			TestEqual(TEXT("audit tool name"), Events[0].Payload->GetStringField(TEXT("toolName")), TEXT("unreal.code_apply_change"));
+			TestEqual(TEXT("audit vetted toolset id"), Events[0].Payload->GetStringField(TEXT("vettedToolsetId")), TEXT("user.test_vetted"));
+			TestEqual(TEXT("audit vetted sha"), Events[0].Payload->GetStringField(TEXT("vettedMainPySha256")), VerifiedSha);
+			TestEqual(TEXT("audit policy decision"), Events[0].Payload->GetStringField(TEXT("policyDecision")), TEXT("allow_vetted_real"));
+			const TSharedPtr<FJsonObject>* SanitizedArgs = nullptr;
+			TestTrue(TEXT("sanitized args present"), Events[0].Payload->TryGetObjectField(TEXT("sanitizedArguments"), SanitizedArgs) && SanitizedArgs && (*SanitizedArgs).IsValid());
+			if (SanitizedArgs && (*SanitizedArgs).IsValid())
+			{
+				TestEqual(TEXT("sanitized preview id preserved"), (*SanitizedArgs)->GetStringField(TEXT("previewId")), TEXT("missing_vetted_preview"));
+				TestFalse(TEXT("dryRun argument stayed false"), (*SanitizedArgs)->GetBoolField(TEXT("dryRun")));
+				TestEqual(TEXT("secret token redacted"), (*SanitizedArgs)->GetStringField(TEXT("token")), TEXT("<redacted:secret>"));
+			}
+		}
+	}
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FUnrealMcpCallToolVettedAuditFailClosedTest,
+	"UnrealMcp.CallTool.VettedAuditFailClosed",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FUnrealMcpCallToolVettedAuditFailClosedTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	int32 AuditAttempts = 0;
+	TSharedPtr<FJsonObject> Payload;
+	{
+		UnrealMcp::FVettedToolsetScope Scope(TEXT("user.test_vetted"), TEXT("deadbeef"));
+		TestTrue(
+			TEXT("payload parses"),
+			UnrealMcpCallToolLibraryTests::ParseCallToolPayload(
+				UnrealMcpCallToolLibraryLocal::CallToolWithAuditWriter(
+					TEXT("unreal.code_apply_change"),
+					TEXT("{\"previewId\":\"missing_vetted_preview\",\"dryRun\":false}"),
+					[&AuditAttempts](const UnrealMcp::FActivityLogEvent& Event, FString& FailureReason)
+					{
+						(void)Event;
+						++AuditAttempts;
+						FailureReason = TEXT("synthetic audit failure");
+						return false;
+					}),
+				Payload));
+	}
+
+	if (!Payload.IsValid())
+	{
+		return false;
+	}
+
+	TestEqual(TEXT("one audit write attempted"), AuditAttempts, 1);
+	bool bIsError = false;
+	Payload->TryGetBoolField(TEXT("isError"), bIsError);
+	TestTrue(TEXT("audit failure returns error"), bIsError);
+	TestTrue(TEXT("audit failure surfaced"), Payload->GetStringField(TEXT("text")).StartsWith(TEXT("vetted_audit_write_failed")));
+	TestFalse(TEXT("underlying handler did not run"), Payload->GetStringField(TEXT("text")).Contains(TEXT("Preview artifact not found")));
+	TestEqual(TEXT("fail closed policy deny"), UnrealMcpCallToolLibraryTests::GetNestedString(Payload, TEXT("meta"), TEXT("policyDecision")), TEXT("deny"));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FUnrealMcpCallToolVettedUserTargetStillDeniedTest,
+	"UnrealMcp.CallTool.VettedUserTargetStillDenied",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FUnrealMcpCallToolVettedUserTargetStillDeniedTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	using namespace UnrealMcpCallToolLibraryTests;
+	DeleteDemoTool();
+	ReloadUserTools(true);
+	TestTrue(TEXT("demo user tool writes"), WriteDemoUserTool());
+	ReloadUserTools(true);
+
+	TSharedPtr<FJsonObject> Payload;
+	{
+		UnrealMcp::FVettedToolsetScope Scope(TEXT("user.test_vetted"), TEXT("deadbeef"));
+		TestTrue(TEXT("payload parses"), ParseCallToolPayload(UUnrealMcpCallToolLibrary::CallTool(DemoToolName, TEXT("{}")), Payload));
+	}
+
+	DeleteDemoTool();
+	ReloadUserTools(true);
+	if (!Payload.IsValid())
+	{
+		return false;
+	}
+
+	bool bIsError = false;
+	Payload->TryGetBoolField(TEXT("isError"), bIsError);
+	TestTrue(TEXT("user target is denied"), bIsError);
+	TestEqual(TEXT("user target reason"), GetNestedString(Payload, TEXT("meta"), TEXT("reason")), TEXT("user_tool_forbidden"));
 	return true;
 }
 

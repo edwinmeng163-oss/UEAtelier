@@ -151,7 +151,10 @@ drafts unless explicitly asked.
 - Python user-tool composition: registered user tools receive injected
   `call_tool` / `call_tool_raw` helpers that route through the UFUNCTION
   `unreal.UnrealMcpCallTool.call_tool` into visible core `unreal.*` tools with
-  allow / force-dry-run / deny policy, depth=1, and `user.*` targets forbidden.
+  allow / force-dry-run / deny policy; a verified vetted-toolset marker may
+  allow real core writes only inside the live hash-checked toolset scope with
+  fail-closed `vetted_real_write` audit. Depth=1 and `user.*` targets remain
+  forbidden.
 - RAG/recommendation, memory, skills, Task Atlas, and verification:
   knowledge index/search/eval, tool/workflow recommend, project memory CRUD,
   skill activity/drafts/promote, task extract/list/describe/rate/pin/promote,
