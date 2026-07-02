@@ -336,6 +336,20 @@ namespace UnrealMcp::TaskAtlasService
 	FOfficialToolsetDraftResult GenerateOfficialToolsetDraft(const FOfficialToolsetDraftRequest& Req);
 	FOfficialToolsetRollbackResult RollbackOfficialToolsetDraft(const FString& ToolsetName, const FString& ModuleName, const FString& GeneratedDir);
 	FOfficialCppToolsetBuildDraftResult BuildOfficialCppToolsetDraft(const FString& ToolId);
+
+	// C4 AgentSkill promotion (instruction-only): create/update an engine
+	// AgentSkill asset documenting a generated made tool, recording the skill
+	// class path in the made tool's tool.json; removal deletes the asset and
+	// clears the manifest field. Never claims executability by itself.
+	struct FAgentSkillPromoteResult
+	{
+		bool bSucceeded = false;
+		FString ErrorCode;
+		FString ErrorMessage;
+		FString SkillPath;
+	};
+	FAgentSkillPromoteResult PromoteMadeToolToAgentSkill(const FString& ToolName);
+	FAgentSkillPromoteResult RemoveMadeToolAgentSkill(const FString& ToolName);
 #if WITH_DEV_AUTOMATION_TESTS
 	void SetOfficialCppBuildEditorRunningForTests(bool bIsRunning);
 	void ClearOfficialCppBuildEditorRunningForTests();

@@ -18,6 +18,9 @@
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 #include "ToolsetRegistry/ToolCallAsyncResultString.h"
+#include "IModelContextProtocolModule.h"
+#include "ModelContextProtocol.h"
+#include "ModelContextProtocolServer.h"
 #include "ToolsetRegistry/UToolsetRegistry.h"
 #include "UObject/StrongObjectPtr.h"
 #include "UnrealMcpCaptureRedaction.h"
@@ -979,6 +982,157 @@ bool FUnrealMcpOfficialCppToolsetMakeCompositeVariantCppTest::RunTest(const FStr
 		TestTrue(TEXT("manifest build required"), bManifestBuildRequired);
 		TestTrue(TEXT("manifest restart required"), bManifestRestartRequired);
 	}
+	return true;
+}
+
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FUnrealMcpOfficialServerToggleLifecycleTest,
+	"UnrealMcp.OfficialServer.ToggleLifecycle",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FUnrealMcpOfficialServerToggleLifecycleTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	IModelContextProtocolModule* const Module = IModelContextProtocolModule::Get();
+	TestNotNull(TEXT("official MCP module loaded"), Module);
+	if (!Module)
+	{
+		return false;
+	}
+
+	const FModelContextProtocolServer* Server = Module->GetServer();
+	if (Server && Server->IsServerRunning())
+	{
+		AddInfo(TEXT("Official server already running; stopping first to test the full cycle."));
+		Module->StopServer();
+	}
+
+	// Same calls as SUnrealMcpWorkbenchPanel::HandleOfficialServerToggleClicked.
+	Module->StartServer(UE::ModelContextProtocol::DefaultServerPort, UE::ModelContextProtocol::DefaultServerUrlPath);
+	bool bRunning = false;
+	for (int32 Attempt = 0; Attempt < 50; ++Attempt)
+	{
+		Server = Module->GetServer();
+		bRunning = Server && Server->IsServerRunning();
+		if (bRunning)
+		{
+			break;
+		}
+		FPlatformProcess::Sleep(0.1f);
+	}
+	TestTrue(TEXT("official server running after start"), bRunning);
+
+	Module->StopServer();
+	bool bStopped = false;
+	for (int32 Attempt = 0; Attempt < 50; ++Attempt)
+	{
+		Server = Module->GetServer();
+		bStopped = !Server || !Server->IsServerRunning();
+		if (bStopped)
+		{
+			break;
+		}
+		FPlatformProcess::Sleep(0.1f);
+	}
+	TestTrue(TEXT("official server stopped after stop"), bStopped);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FUnrealMcpOfficialToolsetAgentSkillPromotionTest,
+	"UnrealMcp.OfficialToolset.AgentSkillPromotion",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FUnrealMcpOfficialToolsetAgentSkillPromotionTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace UnrealMcpOfficialToolsetGenTests;
+
+	const FString CaptureSessionId = MakeCaptureSessionId();
+	const FString Root = WiredTestRoot();
+	const FString PyToolsRoot = FPaths::Combine(Root, TEXT("Tools/UnrealMcpPyTools"));
+	FString MadeToolName;
+	ON_SCOPE_EXIT
+	{
+		if (!MadeToolName.IsEmpty())
+		{
+			UnrealMcp::TaskAtlasService::RemoveMadeToolAgentSkill(MadeToolName);
+		}
+		UnrealMcp::TaskAtlasService::ClearMadeToolsRootDirForTests();
+		IFileManager::Get().Delete(*ProjectTaskPath(WiredTaskId), false, true, true);
+		IFileManager::Get().DeleteDirectory(*Root, false, true);
+		DeleteCaptureSession(CaptureSessionId);
+	};
+
+	IFileManager::Get().DeleteDirectory(*Root, false, true);
+	IFileManager::Get().MakeDirectory(*PyToolsRoot, true);
+	UnrealMcp::TaskAtlasService::SetMadeToolsRootDirForTests(PyToolsRoot);
+
+	FString CaptureRef;
+	TestTrue(TEXT("write captured args"), WriteCapturedArgsFixture(CaptureSessionId, TEXT("agent-skill-probe"), CaptureRef));
+	TestTrue(TEXT("write Task Atlas task"), WriteWiredTaskFixture(CaptureRef));
+
+	TSharedPtr<FJsonObject> Args = MakeObject();
+	Args->SetStringField(TEXT("taskId"), WiredTaskId);
+	const FUnrealMcpExecutionResult MakeResult = ExecuteMcpTool(TEXT("unreal.task_atlas_make_composite"), Args);
+	TestFalse(TEXT("make_composite ok"), MakeResult.bIsError);
+	if (!MakeResult.StructuredContent.IsValid())
+	{
+		return false;
+	}
+	MakeResult.StructuredContent->TryGetStringField(TEXT("toolName"), MadeToolName);
+	TestFalse(TEXT("made tool name present"), MadeToolName.IsEmpty());
+	if (MadeToolName.IsEmpty())
+	{
+		return false;
+	}
+
+	const UnrealMcp::TaskAtlasService::FAgentSkillPromoteResult Promoted =
+		UnrealMcp::TaskAtlasService::PromoteMadeToolToAgentSkill(MadeToolName);
+	TestTrue(TEXT("promotion succeeds"), Promoted.bSucceeded);
+	if (!Promoted.bSucceeded)
+	{
+		AddError(FString::Printf(TEXT("%s: %s"), *Promoted.ErrorCode, *Promoted.ErrorMessage));
+		return false;
+	}
+	TestFalse(TEXT("skill path returned"), Promoted.SkillPath.IsEmpty());
+
+	TStrongObjectPtr<UToolCallAsyncResultString> ListResult(
+		UToolsetRegistry::ExecuteTool(TEXT("ToolsetRegistry.AgentSkillToolset"), TEXT("ListSkills"), TEXT("{}")));
+	TestTrue(TEXT("ListSkills returned result"), ListResult.IsValid());
+	if (ListResult.IsValid())
+	{
+		for (int32 Attempt = 0; Attempt < 200 && !ListResult->bIsComplete; ++Attempt)
+		{
+			FPlatformProcess::Sleep(0.05f);
+		}
+		TestTrue(TEXT("ListSkills completed"), ListResult->bIsComplete);
+		TestTrue(TEXT("ListSkills error empty"), ListResult->Error.IsEmpty());
+		TestTrue(TEXT("promoted skill discoverable via ListSkills"), ListResult->Value.Contains(TEXT("AtlasSkill_")));
+	}
+
+	const UnrealMcp::TaskAtlasService::FAgentSkillPromoteResult Again =
+		UnrealMcp::TaskAtlasService::PromoteMadeToolToAgentSkill(MadeToolName);
+	TestFalse(TEXT("second promotion refused"), Again.bSucceeded);
+	TestEqual(TEXT("second promotion error"), Again.ErrorCode, TEXT("skill_already_promoted"));
+
+	const UnrealMcp::TaskAtlasService::FAgentSkillPromoteResult Removed =
+		UnrealMcp::TaskAtlasService::RemoveMadeToolAgentSkill(MadeToolName);
+	TestTrue(TEXT("removal succeeds"), Removed.bSucceeded);
+	if (!Removed.bSucceeded)
+	{
+		AddError(FString::Printf(TEXT("%s: %s"), *Removed.ErrorCode, *Removed.ErrorMessage));
+	}
+
+	const UnrealMcp::TaskAtlasService::FAgentSkillPromoteResult RemovedAgain =
+		UnrealMcp::TaskAtlasService::RemoveMadeToolAgentSkill(MadeToolName);
+	TestFalse(TEXT("second removal refused"), RemovedAgain.bSucceeded);
+	TestEqual(TEXT("second removal error"), RemovedAgain.ErrorCode, TEXT("skill_not_promoted"));
+
+	MadeToolName.Reset();
 	return true;
 }
 

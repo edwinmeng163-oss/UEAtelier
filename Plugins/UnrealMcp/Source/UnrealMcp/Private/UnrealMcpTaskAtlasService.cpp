@@ -1,5 +1,6 @@
 #include "UnrealMcpTaskAtlasService.h"
 
+#include "UnrealMcpActivityLog.h"
 #include "UnrealMcpCallToolPolicy.h"
 #include "UnrealMcpCapturedArgsStore.h"
 #include "UnrealMcpExtensionLifecycle.h"
@@ -16,6 +17,11 @@
 
 #if UNREALMCP_HAS_OFFICIAL_TOOLSETS
 #include "IPythonScriptPlugin.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "ObjectTools.h"
+#include "ToolsetRegistry/UToolsetRegistry.h"
+#include "ToolsetRegistry/ToolCallAsyncResultString.h"
+#include "UObject/StrongObjectPtr.h"
 #endif
 
 #include "Dom/JsonObject.h"
@@ -3513,4 +3519,268 @@ namespace UnrealMcp::TaskAtlasService
 			});
 		return Views;
 	}
+
+#if UNREALMCP_HAS_OFFICIAL_TOOLSETS
+	namespace
+	{
+		const TCHAR* AgentSkillFolderPath()
+		{
+			return TEXT("/Game/UEAtelierAgentSkills");
+		}
+
+		FString AgentSkillAssetNameForToolId(const FString& ToolId)
+		{
+			FString Sanitized;
+			Sanitized.Reserve(ToolId.Len());
+			for (const TCHAR Ch : ToolId)
+			{
+				Sanitized.AppendChar(FChar::IsAlnum(Ch) ? Ch : TEXT('_'));
+			}
+			return FString(TEXT("AtlasSkill_")) + Sanitized;
+		}
+
+		FString AgentSkillInstructionsForMadeTool(const FResolvedMadeTool& Tool)
+		{
+			FString Description;
+			if (Tool.ToolJson.IsValid())
+			{
+				Tool.ToolJson->TryGetStringField(TEXT("description"), Description);
+			}
+
+			FString Steps;
+			if (Tool.ToolJson.IsValid())
+			{
+				const TArray<TSharedPtr<FJsonValue>>* StepValues = nullptr;
+				if (Tool.ToolJson->TryGetArrayField(TEXT("criticalPath"), StepValues) && StepValues)
+				{
+					for (const TSharedPtr<FJsonValue>& Value : *StepValues)
+					{
+						FString StepName;
+						if (Value.IsValid() && Value->TryGetString(StepName))
+						{
+							Steps += FString::Printf(TEXT("- %s\n"), *StepName);
+						}
+					}
+				}
+			}
+
+			FString Instructions;
+			Instructions += FString::Printf(TEXT("# When to use %s\n\n"), *Tool.ToolName);
+			if (!Description.IsEmpty())
+			{
+				Instructions += Description + TEXT("\n\n");
+			}
+			Instructions += TEXT("This skill documents a Task Atlas generated composite tool. It is\n");
+			Instructions += TEXT("instruction-only: execution happens through the callable tool, never\n");
+			Instructions += TEXT("through this skill.\n\n");
+			Instructions += TEXT("## How to invoke\n\n");
+			Instructions += FString::Printf(TEXT("Call `%s` through the UEAtelier MCP server\n"), *Tool.ToolName);
+			Instructions += TEXT("(`http://127.0.0.1:8765/mcp`, tools/call). Step arguments follow the\n");
+			Instructions += TEXT("tool's inputSchema; composed dangerous steps stay governed by the\n");
+			Instructions += TEXT("call_tool policy (preview/dry-run unless the toolset has been vetted).\n");
+			if (!Steps.IsEmpty())
+			{
+				Instructions += TEXT("\n## Composite steps\n\n");
+				Instructions += Steps;
+			}
+			return Instructions;
+		}
+
+		bool AgentSkillWriteManifestField(const FResolvedMadeTool& Tool, const FString& SkillPath)
+		{
+			TSharedPtr<FJsonObject> Manifest;
+			if (!TaskAtlasServiceLoadJsonObject(Tool.ToolJsonPath, Manifest) || !Manifest.IsValid())
+			{
+				return false;
+			}
+			if (SkillPath.IsEmpty())
+			{
+				Manifest->RemoveField(TEXT("agentSkillPath"));
+			}
+			else
+			{
+				Manifest->SetStringField(TEXT("agentSkillPath"), SkillPath);
+			}
+			return TaskAtlasServiceWriteJsonObject(Manifest, Tool.ToolJsonPath);
+		}
+
+		bool AgentSkillExecuteRegistryTool(const FString& RegistryToolName, const FString& InputJson, FString& OutValue, FString& OutError)
+		{
+			TStrongObjectPtr<UToolCallAsyncResultString> AsyncResult(
+				UToolsetRegistry::ExecuteTool(TEXT("ToolsetRegistry.AgentSkillToolset"), RegistryToolName, InputJson));
+			if (!AsyncResult.IsValid())
+			{
+				OutError = TEXT("ExecuteTool returned null result.");
+				return false;
+			}
+			for (int32 Attempt = 0; Attempt < 200 && !AsyncResult->bIsComplete; ++Attempt)
+			{
+				FPlatformProcess::Sleep(0.05f);
+			}
+			if (!AsyncResult->bIsComplete)
+			{
+				OutError = TEXT("ExecuteTool did not complete in time.");
+				return false;
+			}
+			if (!AsyncResult->Error.IsEmpty())
+			{
+				OutError = AsyncResult->Error;
+				return false;
+			}
+			OutValue = AsyncResult->Value.TrimStartAndEnd();
+			if (OutValue.Len() >= 2 && OutValue.StartsWith(TEXT("\"")) && OutValue.EndsWith(TEXT("\"")))
+			{
+				OutValue = OutValue.Mid(1, OutValue.Len() - 2);
+			}
+			return true;
+		}
+	}
+
+	FAgentSkillPromoteResult PromoteMadeToolToAgentSkill(const FString& ToolName)
+	{
+		FAgentSkillPromoteResult Result;
+		FResolvedMadeTool Tool;
+		FString ErrorCode;
+		FString ErrorMessage;
+		if (!TaskAtlasServiceResolveMadeTool(ToolName, true, Tool, ErrorCode, ErrorMessage))
+		{
+			Result.ErrorCode = ErrorCode;
+			Result.ErrorMessage = ErrorMessage;
+			return Result;
+		}
+
+		FString ExistingSkillPath;
+		if (Tool.ToolJson.IsValid())
+		{
+			Tool.ToolJson->TryGetStringField(TEXT("agentSkillPath"), ExistingSkillPath);
+		}
+		if (!ExistingSkillPath.TrimStartAndEnd().IsEmpty())
+		{
+			Result.ErrorCode = TEXT("skill_already_promoted");
+			Result.ErrorMessage = FString::Printf(TEXT("Made tool '%s' already has AgentSkill '%s'."), *Tool.ToolName, *ExistingSkillPath);
+			return Result;
+		}
+
+		FString Description;
+		if (Tool.ToolJson.IsValid())
+		{
+			Tool.ToolJson->TryGetStringField(TEXT("description"), Description);
+		}
+		if (Description.IsEmpty())
+		{
+			Description = FString::Printf(TEXT("Usage guidance for the Task Atlas generated tool %s."), *Tool.ToolName);
+		}
+
+		const TSharedPtr<FJsonObject> DetailsObject = MakeShared<FJsonObject>();
+		DetailsObject->SetStringField(TEXT("Instructions"), AgentSkillInstructionsForMadeTool(Tool));
+		const TSharedPtr<FJsonObject> InputObject = MakeShared<FJsonObject>();
+		InputObject->SetStringField(TEXT("FolderPath"), AgentSkillFolderPath());
+		InputObject->SetStringField(TEXT("AssetName"), AgentSkillAssetNameForToolId(Tool.ToolId));
+		InputObject->SetStringField(TEXT("Description"), Description);
+		InputObject->SetObjectField(TEXT("Details"), DetailsObject);
+		FString InputJson;
+		const TSharedRef<TJsonWriter<>> InputWriter = TJsonWriterFactory<>::Create(&InputJson);
+		FJsonSerializer::Serialize(InputObject.ToSharedRef(), InputWriter);
+
+		FString SkillPath;
+		FString ExecuteError;
+		if (!AgentSkillExecuteRegistryTool(TEXT("CreateSkill"), InputJson, SkillPath, ExecuteError) || SkillPath.IsEmpty())
+		{
+			Result.ErrorCode = TEXT("skill_create_failed");
+			Result.ErrorMessage = ExecuteError.IsEmpty() ? TEXT("CreateSkill returned an empty path.") : ExecuteError;
+			return Result;
+		}
+
+		if (!AgentSkillWriteManifestField(Tool, SkillPath))
+		{
+			Result.ErrorCode = TEXT("manifest_write_failed");
+			Result.ErrorMessage = TEXT("Skill created but tool.json could not record agentSkillPath.");
+			Result.SkillPath = SkillPath;
+			return Result;
+		}
+
+		FActivityLogEvent Event;
+		Event.EventKind = TEXT("toolset_skill_promoted");
+		Event.Summary = FString::Printf(TEXT("AgentSkill promoted for %s."), *Tool.ToolName).Left(2000);
+		Event.Payload = MakeShared<FJsonObject>();
+		Event.Payload->SetStringField(TEXT("toolName"), Tool.ToolName);
+		Event.Payload->SetStringField(TEXT("agentSkillPath"), SkillPath);
+		FString AuditFailure;
+		if (!TryWriteActivityEvent(Event, AuditFailure))
+		{
+			UE_LOG(LogUnrealMcp, Warning, TEXT("AgentSkill promotion audit write failed for %s: %s"), *Tool.ToolName, *AuditFailure);
+		}
+
+		Result.bSucceeded = true;
+		Result.SkillPath = SkillPath;
+		return Result;
+	}
+
+	FAgentSkillPromoteResult RemoveMadeToolAgentSkill(const FString& ToolName)
+	{
+		FAgentSkillPromoteResult Result;
+		FResolvedMadeTool Tool;
+		FString ErrorCode;
+		FString ErrorMessage;
+		if (!TaskAtlasServiceResolveMadeTool(ToolName, true, Tool, ErrorCode, ErrorMessage))
+		{
+			Result.ErrorCode = ErrorCode;
+			Result.ErrorMessage = ErrorMessage;
+			return Result;
+		}
+
+		FString SkillPath;
+		if (Tool.ToolJson.IsValid())
+		{
+			Tool.ToolJson->TryGetStringField(TEXT("agentSkillPath"), SkillPath);
+		}
+		SkillPath.TrimStartAndEndInline();
+		if (SkillPath.IsEmpty())
+		{
+			Result.ErrorCode = TEXT("skill_not_promoted");
+			Result.ErrorMessage = FString::Printf(TEXT("Made tool '%s' has no recorded AgentSkill."), *Tool.ToolName);
+			return Result;
+		}
+
+		// SkillPath is the generated-class path (/Game/X/Name.Name_C); the asset
+		// package is /Game/X/Name.
+		const FString PackageName = FPackageName::ObjectPathToPackageName(SkillPath);
+		const FString AssetName = FPackageName::GetShortName(PackageName);
+		const FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+		const FAssetData AssetData = AssetRegistryModule.Get().GetAssetByObjectPath(
+			FSoftObjectPath(FString::Printf(TEXT("%s.%s"), *PackageName, *AssetName)));
+		if (AssetData.IsValid())
+		{
+			if (ObjectTools::DeleteAssets({ AssetData }, false) != 1)
+			{
+				Result.ErrorCode = TEXT("skill_delete_failed");
+				Result.ErrorMessage = FString::Printf(TEXT("Failed to delete AgentSkill asset '%s'."), *PackageName);
+				return Result;
+			}
+		}
+
+		if (!AgentSkillWriteManifestField(Tool, FString()))
+		{
+			Result.ErrorCode = TEXT("manifest_write_failed");
+			Result.ErrorMessage = TEXT("Skill removed but tool.json could not clear agentSkillPath.");
+			return Result;
+		}
+
+		FActivityLogEvent Event;
+		Event.EventKind = TEXT("toolset_skill_removed");
+		Event.Summary = FString::Printf(TEXT("AgentSkill removed for %s."), *Tool.ToolName).Left(2000);
+		Event.Payload = MakeShared<FJsonObject>();
+		Event.Payload->SetStringField(TEXT("toolName"), Tool.ToolName);
+		Event.Payload->SetStringField(TEXT("agentSkillPath"), SkillPath);
+		FString AuditFailure;
+		if (!TryWriteActivityEvent(Event, AuditFailure))
+		{
+			UE_LOG(LogUnrealMcp, Warning, TEXT("AgentSkill removal audit write failed for %s: %s"), *Tool.ToolName, *AuditFailure);
+		}
+
+		Result.bSucceeded = true;
+		Result.SkillPath = SkillPath;
+		return Result;
+	}
+#endif
 }
