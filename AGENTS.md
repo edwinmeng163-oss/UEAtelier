@@ -153,8 +153,10 @@ drafts unless explicitly asked.
   `unreal.UnrealMcpCallTool.call_tool` into visible core `unreal.*` tools with
   allow / force-dry-run / deny policy; a verified vetted-toolset marker may
   allow real core writes only inside the live hash-checked toolset scope with
-  fail-closed `vetted_real_write` audit. Depth=1 and `user.*` targets remain
-  forbidden.
+  fail-closed `vetted_real_write` audit. Task Atlas grants vetting only through
+  an in-editor human approval flow with source-policy validation,
+  vetted-context smoke, persisted marker, and fail-closed audit. Depth=1 and
+  `user.*` targets remain forbidden.
 - RAG/recommendation, memory, skills, Task Atlas, and verification:
   knowledge index/search/eval, tool/workflow recommend, project memory CRUD,
   skill activity/drafts/promote, task extract/list/describe/rate/pin/promote,

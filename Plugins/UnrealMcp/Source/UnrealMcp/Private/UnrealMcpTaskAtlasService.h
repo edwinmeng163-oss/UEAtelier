@@ -137,6 +137,16 @@ namespace UnrealMcp::TaskAtlasService
 		bool bLoadedInUserRegistry = false;
 		bool bHasFailureMarker = false;
 		FString FailureDiagnosticPath;
+		bool bVettedMarkerPresent = false;
+		bool bVetted = false;
+		FString MarkerSha;
+		bool bLiveShaMatches = false;
+		FString AiReviewVerdict;
+		FString SmokeStatus;
+		FString Approver;
+		FString ApprovedAtUtc;
+		FString RevokedBy;
+		FString RevokedAtUtc;
 	};
 
 	struct FDeleteMadeToolResult
@@ -197,6 +207,38 @@ namespace UnrealMcp::TaskAtlasService
 		bool bDryRun = false;
 	};
 
+	struct FVetMadeToolRequest
+	{
+		FString ToolName;
+		FString AiReviewVerdict;
+		FString AiReviewSummary;
+		FString Approver;
+	};
+
+	struct FVetMadeToolResult
+	{
+		bool bVetted = false;
+		FString FailureStage;
+		FString FailureDetail;
+		FString MainPySha256;
+	};
+
+	struct FRevokeMadeToolResult
+	{
+		bool bRevoked = false;
+		FString FailureStage;
+		FString FailureDetail;
+	};
+
+	struct FVetImpactDescription
+	{
+		bool bResolved = false;
+		FString FailureStage;
+		FString FailureDetail;
+		FString MainPySha256;
+		TArray<FString> DangerousTools;
+	};
+
 	struct FUserToolView
 	{
 		FString ToolName;
@@ -211,6 +253,16 @@ namespace UnrealMcp::TaskAtlasService
 		bool bLoaded = false;
 		bool bRejected = false;
 		FString RejectionReason;
+		bool bVettedMarkerPresent = false;
+		bool bVetted = false;
+		FString MarkerSha;
+		bool bLiveShaMatches = false;
+		FString AiReviewVerdict;
+		FString SmokeStatus;
+		FString Approver;
+		FString ApprovedAtUtc;
+		FString RevokedBy;
+		FString RevokedAtUtc;
 	};
 
 	FEligibilityResult ClassifyTask(const FTaskAtlasModel& Task);
@@ -225,6 +277,9 @@ namespace UnrealMcp::TaskAtlasService
 	FPromoteToRagResult PromoteToRag(const FString& TaskId);
 	FSmokeResult SmokeMadeTool(const FSmokeRequest& Req);
 	FSmokeResult SmokeMadeTool(const FString& ToolName);
+	FVetMadeToolResult VetMadeTool(const FVetMadeToolRequest& Req);
+	FRevokeMadeToolResult RevokeMadeTool(const FString& ToolName, const FString& Approver, const FString& Reason);
+	FVetImpactDescription DescribeVetImpact(const FString& ToolName);
 	TArray<FUserToolView> IntrospectUserRegistry();
 	FString SanitizeToolIdPart(const FString& In);
 	FString MakeAtlasToolId(const FString& TaskLabel, const FString& TaskId);

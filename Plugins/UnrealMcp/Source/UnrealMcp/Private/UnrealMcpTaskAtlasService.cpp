@@ -1,16 +1,20 @@
 #include "UnrealMcpTaskAtlasService.h"
 
+#include "UnrealMcpActivityLog.h"
 #include "UnrealMcpCallToolPolicy.h"
 #include "UnrealMcpCapturedArgsStore.h"
 #include "UnrealMcpExtensionLifecycle.h"
 #include "UnrealMcpHashUtils.h"
 #include "UnrealMcpModule.h"
+#include "UnrealMcpPythonToolBridge.h"
 #include "UnrealMcpSelfExtensionTools.h"
+#include "UnrealMcpToolHandlerRegistry.h"
 #include "UnrealMcpToolRegistry.h"
 #include "UnrealMcpTaskAtlasTools.h"
 #include "UnrealMcpUserToolListVersion.h"
 #include "UnrealMcpUserToolLock.h"
 #include "UnrealMcpUserToolRegistry.h"
+#include "UnrealMcpVettedToolset.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -96,12 +100,16 @@ namespace UnrealMcp::TaskAtlasService
 			TSharedPtr<FJsonObject> ToolJson;
 		};
 
+		TArray<FString> TaskAtlasServiceReadStringArrayField(const TSharedPtr<FJsonObject>& Object, const FString& FieldName);
+
 #if WITH_DEV_AUTOMATION_TESTS
 		FString GTaskAtlasServiceMadeToolsRootForTests;
 		FString GTaskAtlasServiceSavedRootForTests;
 		bool bTaskAtlasServiceCorruptNextStagingShaForTests = false;
 		bool bTaskAtlasServiceRejectNextTargetReloadForTests = false;
+		bool bTaskAtlasServiceRejectNextVetReloadForTests = false;
 		bool bTaskAtlasServiceFailNextKnowledgeRefreshForTests = false;
+		bool bTaskAtlasServiceFailNextVetAuditForTests = false;
 #endif
 
 		FString TaskAtlasServiceNormalizeAbsolutePath(const FString& Path)
@@ -453,6 +461,43 @@ namespace UnrealMcp::TaskAtlasService
 				FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
 		}
 
+		bool TaskAtlasServiceWriteBytesAtomicSameDir(const TArray<uint8>& Bytes, const FString& Path, FString& OutFailureReason)
+		{
+			OutFailureReason.Reset();
+			IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path), true);
+			const FString TempPath = FString::Printf(TEXT("%s.tmp.%s"), *Path, *FGuid::NewGuid().ToString(EGuidFormats::Short));
+			if (!FFileHelper::SaveArrayToFile(Bytes, *TempPath))
+			{
+				OutFailureReason = FString::Printf(TEXT("Failed to write temporary file '%s'."), *TempPath);
+				return false;
+			}
+			if (!IFileManager::Get().Move(*Path, *TempPath, true, true))
+			{
+				IFileManager::Get().Delete(*TempPath, false, true);
+				OutFailureReason = FString::Printf(TEXT("Failed to rename temporary file into '%s'."), *Path);
+				return false;
+			}
+			return true;
+		}
+
+		bool TaskAtlasServiceWriteTextAtomicSameDir(const FString& Text, const FString& Path, FString& OutFailureReason)
+		{
+			FTCHARToUTF8 Utf8(*Text);
+			TArray<uint8> Bytes;
+			Bytes.Append(reinterpret_cast<const uint8*>(Utf8.Get()), Utf8.Length());
+			return TaskAtlasServiceWriteBytesAtomicSameDir(Bytes, Path, OutFailureReason);
+		}
+
+		bool TaskAtlasServiceWriteJsonObjectAtomicSameDir(const TSharedPtr<FJsonObject>& Object, const FString& Path, FString& OutFailureReason)
+		{
+			if (!Object.IsValid())
+			{
+				OutFailureReason = TEXT("Invalid JSON object.");
+				return false;
+			}
+			return TaskAtlasServiceWriteTextAtomicSameDir(TaskAtlasServiceJsonToPrettyString(Object), Path, OutFailureReason);
+		}
+
 		FString TaskAtlasServiceJsonToCondensedString(const TSharedPtr<FJsonObject>& Object)
 		{
 			if (!Object.IsValid())
@@ -465,6 +510,138 @@ namespace UnrealMcp::TaskAtlasService
 				TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Output);
 			FJsonSerializer::Serialize(Object.ToSharedRef(), Writer);
 			return Output;
+		}
+
+		bool TaskAtlasServiceReadMainPy(
+			const FResolvedMadeTool& Tool,
+			FString& OutSource,
+			TArray<uint8>& OutBytes,
+			FString& OutSha256,
+			FString& OutFailureReason)
+		{
+			OutSource.Reset();
+			OutBytes.Reset();
+			OutSha256.Reset();
+			OutFailureReason.Reset();
+			const FString MainPyPath = FPaths::Combine(Tool.TargetDir, TEXT("main.py"));
+			if (!FPaths::FileExists(MainPyPath) || TaskAtlasServiceIsSymlink(MainPyPath))
+			{
+				OutFailureReason = TEXT("main.py is missing or unsafe.");
+				return false;
+			}
+			if (!FFileHelper::LoadFileToArray(OutBytes, *MainPyPath)
+				|| !FFileHelper::LoadFileToString(OutSource, *MainPyPath))
+			{
+				OutFailureReason = TEXT("Failed to read main.py.");
+				return false;
+			}
+			OutSha256 = HashUtils::Sha256LowerHex(OutBytes).ToLower();
+			return true;
+		}
+
+		TArray<FString> TaskAtlasServiceReadStepToolNames(const TSharedPtr<FJsonObject>& ToolJson)
+		{
+			TArray<FString> Tools = TaskAtlasServiceReadStringArrayField(ToolJson, TEXT("criticalPath"));
+			const TArray<TSharedPtr<FJsonValue>>* StepRefs = nullptr;
+			if (ToolJson.IsValid() && ToolJson->TryGetArrayField(TEXT("stepRefs"), StepRefs) && StepRefs)
+			{
+				for (const TSharedPtr<FJsonValue>& Value : *StepRefs)
+				{
+					const TSharedPtr<FJsonObject> StepObject = Value.IsValid() && Value->Type == EJson::Object ? Value->AsObject() : nullptr;
+					FString ToolName;
+					if (StepObject.IsValid()
+						&& (StepObject->TryGetStringField(TEXT("tool"), ToolName) || StepObject->TryGetStringField(TEXT("toolName"), ToolName))
+						&& !ToolName.TrimStartAndEnd().IsEmpty())
+					{
+						Tools.Add(ToolName.TrimStartAndEnd());
+					}
+				}
+			}
+			Tools.Sort();
+			for (int32 Index = Tools.Num() - 1; Index > 0; --Index)
+			{
+				if (Tools[Index] == Tools[Index - 1])
+				{
+					Tools.RemoveAt(Index);
+				}
+			}
+			return Tools;
+		}
+
+		bool TaskAtlasServiceIsDangerousStepTool(const FString& ToolName)
+		{
+			FCallToolTargetFacts Facts = TaskAtlasServiceMakePolicyFacts(ToolName);
+			const FCallToolPolicyResult PolicyResult = ClassifyCallToolTarget_Pure(Facts);
+			return PolicyResult.Decision != ECallToolDecision::Allow;
+		}
+
+		void TaskAtlasServicePopulateVettedFieldsFromJson(
+			const TSharedPtr<FJsonObject>& ToolJson,
+			const FString& LiveMainPySha,
+			bool& bOutMarkerPresent,
+			bool& bOutVetted,
+			FString& OutMarkerSha,
+			bool& bOutLiveShaMatches,
+			FString& OutAiReviewVerdict,
+			FString& OutSmokeStatus,
+			FString& OutApprover,
+			FString& OutApprovedAtUtc,
+			FString& OutRevokedBy,
+			FString& OutRevokedAtUtc)
+		{
+			bOutMarkerPresent = false;
+			bOutVetted = false;
+			OutMarkerSha.Reset();
+			bOutLiveShaMatches = false;
+			OutAiReviewVerdict.Reset();
+			OutSmokeStatus.Reset();
+			OutApprover.Reset();
+			OutApprovedAtUtc.Reset();
+			OutRevokedBy.Reset();
+			OutRevokedAtUtc.Reset();
+
+			const TSharedPtr<FJsonObject>* MarkerObject = nullptr;
+			if (!ToolJson.IsValid()
+				|| !ToolJson->TryGetObjectField(TEXT("vettedMarker"), MarkerObject)
+				|| !MarkerObject
+				|| !(*MarkerObject).IsValid())
+			{
+				return;
+			}
+
+			bOutMarkerPresent = true;
+			FVettedToolsetMarker Marker = DeserializeVettedToolsetMarker(ToolJson);
+			bOutVetted = Marker.bVetted;
+			OutMarkerSha = Marker.MainPySha256;
+			bOutLiveShaMatches = !OutMarkerSha.IsEmpty() && OutMarkerSha.Equals(LiveMainPySha, ESearchCase::CaseSensitive);
+			OutAiReviewVerdict = Marker.AiReviewVerdict;
+			OutSmokeStatus = Marker.SmokeStatus;
+			OutApprover = Marker.Approver;
+			OutApprovedAtUtc = Marker.ApprovedAtUtc;
+			(*MarkerObject)->TryGetStringField(TEXT("revokedBy"), OutRevokedBy);
+			(*MarkerObject)->TryGetStringField(TEXT("revokedAtUtc"), OutRevokedAtUtc);
+		}
+
+		FToolHandlerRegistryEntry TaskAtlasServiceMakeUserToolHandlerEntry(const UserRegistry::FUserToolEntry& Entry)
+		{
+			FString NormalizedScaffoldDir = Entry.ScaffoldDir;
+			FPaths::NormalizeFilename(NormalizedScaffoldDir);
+			NormalizedScaffoldDir.RemoveFromEnd(TEXT("/"));
+
+			FToolHandlerRegistryEntry HandlerEntry;
+			HandlerEntry.HandlerName = Entry.ToolName;
+			HandlerEntry.Category = TEXT("user");
+			HandlerEntry.SourceFile = Entry.PythonHandlerPath;
+			HandlerEntry.ImplementationTrack = EToolImplementationTrack::Python;
+			HandlerEntry.PythonHandlerPath = FPaths::Combine(
+				Extension::UserPyToolsRelativeRoot,
+				FPaths::GetCleanFilename(NormalizedScaffoldDir),
+				TEXT("main.py"));
+			HandlerEntry.PythonHandlerSha256 = Entry.PythonHandlerSha256;
+			HandlerEntry.PythonImportAllowList = Entry.ImportAllowlist;
+			HandlerEntry.ToolNames.Add(Entry.ToolName);
+			HandlerEntry.bLoadedFromUserRegistry = true;
+			return HandlerEntry;
 		}
 
 		FString TaskAtlasServiceMakeDisplayPath(const FString& Path)
@@ -1344,6 +1521,109 @@ namespace UnrealMcp::TaskAtlasService
 			return false;
 		}
 
+		TSharedPtr<FJsonObject> TaskAtlasServiceFindExecutionStructuredContent(const FUnrealMcpExecutionResult& ExecutionResult)
+		{
+			if (!ExecutionResult.StructuredContent.IsValid())
+			{
+				return nullptr;
+			}
+			const TSharedPtr<FJsonObject>* Inner = nullptr;
+			if (ExecutionResult.StructuredContent->TryGetObjectField(TEXT("structuredContent"), Inner) && Inner && (*Inner).IsValid())
+			{
+				return *Inner;
+			}
+			return ExecutionResult.StructuredContent;
+		}
+
+		int32 TaskAtlasServiceCountFailedSteps(const FUnrealMcpExecutionResult& ExecutionResult)
+		{
+			int32 FailedSteps = 0;
+			const TSharedPtr<FJsonObject> Structured = TaskAtlasServiceFindExecutionStructuredContent(ExecutionResult);
+			const TArray<TSharedPtr<FJsonValue>>* Steps = nullptr;
+			if (!Structured.IsValid() || !Structured->TryGetArrayField(TEXT("steps"), Steps) || !Steps)
+			{
+				return ExecutionResult.bIsError ? 1 : 0;
+			}
+			for (const TSharedPtr<FJsonValue>& Value : *Steps)
+			{
+				const TSharedPtr<FJsonObject> Step = Value.IsValid() && Value->Type == EJson::Object ? Value->AsObject() : nullptr;
+				bool bStepIsError = false;
+				if (Step.IsValid() && Step->TryGetBoolField(TEXT("isError"), bStepIsError) && bStepIsError)
+				{
+					++FailedSteps;
+				}
+			}
+			return FailedSteps;
+		}
+
+		int32 TaskAtlasServiceCountBlockedSteps(const FUnrealMcpExecutionResult& ExecutionResult)
+		{
+			const TSharedPtr<FJsonObject> Structured = TaskAtlasServiceFindExecutionStructuredContent(ExecutionResult);
+			if (!Structured.IsValid())
+			{
+				return 0;
+			}
+			double BlockedCount = 0.0;
+			if (Structured->TryGetNumberField(TEXT("blockedCount"), BlockedCount))
+			{
+				return static_cast<int32>(BlockedCount);
+			}
+			bool bHasBlockedSteps = false;
+			if (Structured->TryGetBoolField(TEXT("hasBlockedSteps"), bHasBlockedSteps) && bHasBlockedSteps)
+			{
+				return 1;
+			}
+			if (TaskAtlasServiceSmokeResultHasBlockedSteps(ExecutionResult))
+			{
+				return 1;
+			}
+			return 0;
+		}
+
+		bool TaskAtlasServiceRunMadeToolSmoke(
+			const FString& ToolName,
+			const TSharedPtr<FJsonObject>& SmokeArgs,
+			bool bDryRunArg,
+			FUnrealMcpExecutionResult& OutExecutionResult,
+			FString& OutFailureReason)
+		{
+			OutFailureReason.Reset();
+			const UserRegistry::FUserToolEntry* Entry = nullptr;
+			FToolHandlerRegistryEntry HandlerEntry;
+			{
+				UserToolLock::FSharedGuard Guard;
+				Entry = UserRegistry::FindUserTool(ToolName);
+				if (!Entry)
+				{
+					OutFailureReason = TEXT("Generated user tool is not loaded.");
+					return false;
+				}
+				HandlerEntry = TaskAtlasServiceMakeUserToolHandlerEntry(*Entry);
+			}
+
+			TSharedPtr<FJsonObject> ExecutionArgs = MakeShared<FJsonObject>();
+			if (SmokeArgs.IsValid())
+			{
+				ExecutionArgs->Values = SmokeArgs->Values;
+			}
+			ExecutionArgs->SetBoolField(TEXT("dryRun"), bDryRunArg);
+			OutExecutionResult = UnrealMcpPythonToolBridge::ExecutePythonRegisteredTool(HandlerEntry, *ExecutionArgs);
+			return true;
+		}
+
+		bool TaskAtlasServiceTryWriteVetAuditEvent(const FActivityLogEvent& Event, FString& OutFailureReason)
+		{
+#if WITH_DEV_AUTOMATION_TESTS
+			if (bTaskAtlasServiceFailNextVetAuditForTests)
+			{
+				bTaskAtlasServiceFailNextVetAuditForTests = false;
+				OutFailureReason = TEXT("test_forced_vet_audit_failure");
+				return false;
+			}
+#endif
+			return TryWriteActivityEvent(Event, OutFailureReason);
+		}
+
 		bool TaskAtlasServiceSetToolJsonReplayStatus(
 			const FResolvedMadeTool& Tool,
 			const FString& ReplayStatus,
@@ -2053,6 +2333,28 @@ namespace UnrealMcp::TaskAtlasService
 			Entry.bHasFailureMarker = TaskAtlasServiceHasFailureMarker(CanonicalCandidateDir);
 			Entry.FailureDiagnosticPath = TaskAtlasServiceReadFailureDiagnosticPath(ToolJson);
 			{
+				TArray<uint8> MainPyBytes;
+				const FString MainPyPath = FPaths::Combine(CanonicalCandidateDir, TEXT("main.py"));
+				FString LiveSha;
+				if (FFileHelper::LoadFileToArray(MainPyBytes, *MainPyPath))
+				{
+					LiveSha = HashUtils::Sha256LowerHex(MainPyBytes).ToLower();
+				}
+				TaskAtlasServicePopulateVettedFieldsFromJson(
+					ToolJson,
+					LiveSha,
+					Entry.bVettedMarkerPresent,
+					Entry.bVetted,
+					Entry.MarkerSha,
+					Entry.bLiveShaMatches,
+					Entry.AiReviewVerdict,
+					Entry.SmokeStatus,
+					Entry.Approver,
+					Entry.ApprovedAtUtc,
+					Entry.RevokedBy,
+					Entry.RevokedAtUtc);
+			}
+			{
 				UserToolLock::FSharedGuard Guard;
 				Entry.bLoadedInUserRegistry = UserRegistry::FindUserTool(Entry.ToolName) != nullptr;
 			}
@@ -2102,9 +2404,19 @@ namespace UnrealMcp::TaskAtlasService
 		bTaskAtlasServiceRejectNextTargetReloadForTests = true;
 	}
 
+	void RejectNextVetReloadForTests()
+	{
+		bTaskAtlasServiceRejectNextVetReloadForTests = true;
+	}
+
 	void FailNextPromoteRefreshForTests()
 	{
 		bTaskAtlasServiceFailNextKnowledgeRefreshForTests = true;
+	}
+
+	void FailNextVetAuditForTests()
+	{
+		bTaskAtlasServiceFailNextVetAuditForTests = true;
 	}
 #endif
 
@@ -2264,21 +2576,27 @@ namespace UnrealMcp::TaskAtlasService
 			}
 		}
 
-		FJsonObject SmokeArguments;
-		SmokeArguments.SetStringField(TEXT("toolName"), Tool.ToolName);
-		SmokeArguments.SetStringField(TEXT("dryRunArgs"), SmokeArgsText);
-		SmokeArguments.SetNumberField(TEXT("timeoutSeconds"), 15.0);
-		const FUnrealMcpExecutionResult SmokeExecutionResult = UnrealMcpUserToolSmokeTool::Execute(SmokeArguments);
+		FUnrealMcpExecutionResult SmokeExecutionResult;
+		FString SmokeFailureReason;
+		if (!TaskAtlasServiceRunMadeToolSmoke(Tool.ToolName, SmokeArgs, false, SmokeExecutionResult, SmokeFailureReason))
+		{
+			Result.Outcome = ESmokeOutcome::FailedToExecute;
+			Result.ErrorCode = TEXT("smoke_failed_to_execute");
+			Result.ErrorMessage = SmokeFailureReason;
+			Result.StructuredContent = TaskAtlasServiceMakeSmokeResultContent(Result);
+			return Result;
+		}
 		Result.SmokeText = SmokeExecutionResult.Text;
 
-		const bool bHasBlockedSteps = TaskAtlasServiceSmokeResultHasBlockedSteps(SmokeExecutionResult);
-		if (SmokeExecutionResult.bIsError || bHasBlockedSteps)
+		const int32 FailedStepCount = TaskAtlasServiceCountFailedSteps(SmokeExecutionResult);
+		const int32 BlockedStepCount = TaskAtlasServiceCountBlockedSteps(SmokeExecutionResult);
+		if (SmokeExecutionResult.bIsError || FailedStepCount > 0 || BlockedStepCount > 0)
 		{
 			const FString Reason = SmokeExecutionResult.bIsError
 				? (SmokeExecutionResult.Text.IsEmpty() ? FString(TEXT("mcp_user_tool_smoke failed")) : SmokeExecutionResult.Text)
-				: FString(TEXT("mcp_user_tool_smoke reported blocked steps"));
+				: FString::Printf(TEXT("mcp_user_tool_smoke reported failedSteps=%d blockedSteps=%d"), FailedStepCount, BlockedStepCount);
 			Result.Outcome = ESmokeOutcome::Failed;
-			Result.ErrorCode = SmokeExecutionResult.bIsError ? FString(TEXT("smoke_failed")) : FString(TEXT("smoke_blocked_steps"));
+			Result.ErrorCode = SmokeExecutionResult.bIsError || FailedStepCount > 0 ? FString(TEXT("smoke_failed")) : FString(TEXT("smoke_blocked_steps"));
 			Result.ErrorMessage = Reason;
 
 			TaskAtlasServiceWriteFailureMarker(Tool, Reason);
@@ -2329,6 +2647,314 @@ namespace UnrealMcp::TaskAtlasService
 		return SmokeMadeTool(Req);
 	}
 
+	FVetImpactDescription DescribeVetImpact(const FString& ToolName)
+	{
+		FVetImpactDescription Result;
+		FResolvedMadeTool Tool;
+		FString ErrorCode;
+		FString ErrorMessage;
+		if (!TaskAtlasServiceResolveMadeTool(ToolName, true, Tool, ErrorCode, ErrorMessage))
+		{
+			Result.FailureStage = TEXT("resolve");
+			Result.FailureDetail = ErrorMessage;
+			return Result;
+		}
+
+		FString MainPy;
+		TArray<uint8> MainPyBytes;
+		FString FailureReason;
+		if (!TaskAtlasServiceReadMainPy(Tool, MainPy, MainPyBytes, Result.MainPySha256, FailureReason))
+		{
+			Result.FailureStage = TEXT("source_policy");
+			Result.FailureDetail = FailureReason;
+			return Result;
+		}
+
+		for (const FString& StepTool : TaskAtlasServiceReadStepToolNames(Tool.ToolJson))
+		{
+			if (TaskAtlasServiceIsDangerousStepTool(StepTool))
+			{
+				Result.DangerousTools.Add(StepTool);
+			}
+		}
+		Result.bResolved = true;
+		return Result;
+	}
+
+	FVetMadeToolResult VetMadeTool(const FVetMadeToolRequest& Req)
+	{
+		check(IsInGameThread());
+		FVetMadeToolResult Result;
+		auto Fail = [&Result](const FString& Stage, const FString& Detail)
+		{
+			Result.bVetted = false;
+			Result.FailureStage = Stage;
+			Result.FailureDetail = Detail;
+			return Result;
+		};
+
+		FResolvedMadeTool Tool;
+		FString ErrorCode;
+		FString ErrorMessage;
+		if (!TaskAtlasServiceResolveMadeTool(Req.ToolName, true, Tool, ErrorCode, ErrorMessage))
+		{
+			return Fail(TEXT("resolve"), ErrorMessage);
+		}
+		Result.MainPySha256.Reset();
+
+		FString LoadedSha;
+		{
+			UserToolLock::FSharedGuard Guard;
+			const UserRegistry::FUserToolEntry* Entry = UserRegistry::FindUserTool(Tool.ToolName);
+			if (!Entry)
+			{
+				return Fail(TEXT("resolve"), TEXT("Generated Task Atlas tool is not loaded in the user registry."));
+			}
+			LoadedSha = Entry->PythonHandlerSha256.TrimStartAndEnd().ToLower();
+		}
+
+		const FString Verdict = Req.AiReviewVerdict.TrimStartAndEnd();
+		const FString Summary = Req.AiReviewSummary.TrimStartAndEnd();
+		const FString Approver = Req.Approver.TrimStartAndEnd();
+		if (Verdict != TEXT("pass") || Summary.IsEmpty() || Approver.IsEmpty())
+		{
+			return Fail(TEXT("request"), TEXT("AiReviewVerdict must equal 'pass', and AiReviewSummary plus Approver are required."));
+		}
+
+		FString MainPy;
+		TArray<uint8> MainPyBytes;
+		FString MainPySha;
+		FString FailureReason;
+		if (!TaskAtlasServiceReadMainPy(Tool, MainPy, MainPyBytes, MainPySha, FailureReason))
+		{
+			return Fail(TEXT("source_policy"), FailureReason);
+		}
+
+		const FCompositeSourcePolicyResult AllowlistPolicy = IsImportAllowlistVettable_Pure(TaskAtlasServiceReadStringArrayField(Tool.ToolJson, TEXT("importAllowlist")));
+		const FCompositeSourcePolicyResult SourcePolicy = ValidateCompositeSourcePolicy_Pure(MainPy);
+		TArray<FString> PolicyViolations;
+		PolicyViolations.Append(AllowlistPolicy.Violations);
+		PolicyViolations.Append(SourcePolicy.Violations);
+		if (PolicyViolations.Num() > 0)
+		{
+			return Fail(TEXT("source_policy"), FString::Join(PolicyViolations, TEXT("; ")));
+		}
+
+		Result.MainPySha256 = MainPySha;
+		if (!MainPySha.Equals(LoadedSha, ESearchCase::CaseSensitive))
+		{
+			return Fail(TEXT("hash_baseline"), FString::Printf(TEXT("Live main.py hash %s does not match loaded registry hash %s."), *MainPySha, *LoadedSha));
+		}
+
+		FSmokeResult SmokeResult;
+		{
+			TUniquePtr<FVettedToolsetScope> VettedScope = MakeUnique<FVettedToolsetScope>(Tool.ToolName, MainPySha);
+			FSmokeRequest SmokeReq;
+			SmokeReq.ToolName = Tool.ToolName;
+			SmokeReq.bDryRun = false;
+			SmokeResult = SmokeMadeTool(SmokeReq);
+		}
+		if (SmokeResult.Outcome != ESmokeOutcome::Passed)
+		{
+			const FString Detail = SmokeResult.ErrorMessage.IsEmpty() ? SmokeResult.SmokeText : SmokeResult.ErrorMessage;
+			return Fail(TEXT("smoke"), Detail.IsEmpty() ? FString(TEXT("Vetted-context smoke did not pass.")) : Detail);
+		}
+
+		const FString ResolvedToolName = Tool.ToolName;
+		FScopeLock MutationGuard(&GTaskAtlasServiceMutationLock);
+		if (!TaskAtlasServiceResolveMadeTool(ResolvedToolName, true, Tool, ErrorCode, ErrorMessage))
+		{
+			return Fail(TEXT("hash_recheck"), ErrorMessage);
+		}
+
+		FString RecheckMainPy;
+		TArray<uint8> RecheckBytes;
+		FString RecheckSha;
+		if (!TaskAtlasServiceReadMainPy(Tool, RecheckMainPy, RecheckBytes, RecheckSha, FailureReason))
+		{
+			return Fail(TEXT("hash_recheck"), FailureReason);
+		}
+		if (!RecheckSha.Equals(MainPySha, ESearchCase::CaseSensitive))
+		{
+			return Fail(TEXT("hash_recheck"), FString::Printf(TEXT("main.py changed during vetting. before=%s after=%s"), *MainPySha, *RecheckSha));
+		}
+		Result.MainPySha256 = RecheckSha;
+
+		TArray<uint8> PreWriteBytes;
+		if (!FFileHelper::LoadFileToArray(PreWriteBytes, *Tool.ToolJsonPath))
+		{
+			return Fail(TEXT("marker_write"), TEXT("Failed to read pre-write tool.json bytes."));
+		}
+
+		FVettedToolsetMarker Marker;
+		Marker.SchemaVersion = 1;
+		Marker.bVetted = true;
+		Marker.MainPySha256 = RecheckSha;
+		Marker.AiReviewVerdict = Verdict;
+		Marker.AiReviewSummary = Summary;
+		Marker.SmokeStatus = TEXT("passed");
+		Marker.Approver = Approver;
+		Marker.ApprovedAtUtc = FDateTime::UtcNow().ToIso8601();
+		Tool.ToolJson->SetObjectField(TEXT("vettedMarker"), SerializeVettedToolsetMarker(Marker));
+
+		if (!TaskAtlasServiceWriteJsonObjectAtomicSameDir(Tool.ToolJson, Tool.ToolJsonPath, FailureReason))
+		{
+			return Fail(TEXT("marker_write"), FailureReason);
+		}
+
+		auto RestorePreWrite = [&PreWriteBytes, &Tool](FString& OutRestoreFailure)
+		{
+			FString WriteFailure;
+			const bool bRestored = TaskAtlasServiceWriteBytesAtomicSameDir(PreWriteBytes, Tool.ToolJsonPath, WriteFailure);
+			TaskAtlasServiceReloadUserRegistry(true);
+			OutRestoreFailure = WriteFailure;
+			return bRestored;
+		};
+
+		UserRegistry::FReloadResult ReloadResult = TaskAtlasServiceReloadUserRegistry(true);
+#if WITH_DEV_AUTOMATION_TESTS
+		if (bTaskAtlasServiceRejectNextVetReloadForTests)
+		{
+			bTaskAtlasServiceRejectNextVetReloadForTests = false;
+			UserRegistry::FReloadResult::FRejection Rejection;
+			Rejection.ToolName = Tool.ToolName;
+			Rejection.Reason = TEXT("test_forced_vet_reload_rejection");
+			ReloadResult.RejectedTools.Add(MoveTemp(Rejection));
+		}
+#endif
+		TArray<FString> ReloadRejectedReasons;
+		bool bTargetRejected = false;
+		TaskAtlasServiceCollectReloadRejections(ReloadResult, Tool.ToolName, ReloadRejectedReasons, bTargetRejected);
+		if (bTargetRejected)
+		{
+			FString RestoreFailure;
+			const bool bRestored = RestorePreWrite(RestoreFailure);
+			const FString RestoreSuffix = bRestored ? FString() : FString::Printf(TEXT(" Restore failed: %s"), *RestoreFailure);
+			const FString Detail = FString::Printf(
+				TEXT("Registry reload rejected vetted marker: %s%s"),
+				*FString::Join(ReloadRejectedReasons, TEXT("; ")),
+				*RestoreSuffix);
+			return Fail(TEXT("reload"), Detail);
+		}
+
+		TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+		Payload->SetStringField(TEXT("toolName"), Tool.ToolName);
+		Payload->SetStringField(TEXT("markerSha"), RecheckSha);
+		Payload->SetStringField(TEXT("approver"), Approver);
+		Payload->SetStringField(TEXT("verdict"), Verdict);
+		Payload->SetStringField(TEXT("smokeStatus"), TEXT("passed"));
+		FActivityLogEvent Event;
+		Event.EventKind = TEXT("toolset_vetted");
+		Event.Summary = FString::Printf(TEXT("Task Atlas made tool %s approved for vetted real writes."), *Tool.ToolName);
+		Event.Payload = Payload;
+		if (!TaskAtlasServiceTryWriteVetAuditEvent(Event, FailureReason))
+		{
+			FString RestoreFailure;
+			const bool bRestored = RestorePreWrite(RestoreFailure);
+			const FString RestoreSuffix = bRestored ? FString() : FString::Printf(TEXT(" Restore failed: %s"), *RestoreFailure);
+			const FString Detail = FString::Printf(
+				TEXT("%s%s"),
+				*FailureReason,
+				*RestoreSuffix);
+			return Fail(TEXT("audit_write_failed"), Detail);
+		}
+
+		Result.bVetted = true;
+		return Result;
+	}
+
+	FRevokeMadeToolResult RevokeMadeTool(const FString& ToolName, const FString& Approver, const FString& Reason)
+	{
+		check(IsInGameThread());
+		FRevokeMadeToolResult Result;
+		auto Fail = [&Result](const FString& Stage, const FString& Detail)
+		{
+			Result.bRevoked = false;
+			Result.FailureStage = Stage;
+			Result.FailureDetail = Detail;
+			return Result;
+		};
+
+		FResolvedMadeTool Tool;
+		FString ErrorCode;
+		FString ErrorMessage;
+		if (!TaskAtlasServiceResolveMadeTool(ToolName, true, Tool, ErrorCode, ErrorMessage))
+		{
+			return Fail(TEXT("resolve"), ErrorMessage);
+		}
+		const FString EffectiveApprover = Approver.TrimStartAndEnd();
+		if (EffectiveApprover.IsEmpty())
+		{
+			return Fail(TEXT("request"), TEXT("Approver is required to revoke vetted authority."));
+		}
+
+		const FString ResolvedToolName = Tool.ToolName;
+		FScopeLock MutationGuard(&GTaskAtlasServiceMutationLock);
+		if (!TaskAtlasServiceResolveMadeTool(ResolvedToolName, true, Tool, ErrorCode, ErrorMessage))
+		{
+			return Fail(TEXT("resolve"), ErrorMessage);
+		}
+
+		FString MainPy;
+		TArray<uint8> MainPyBytes;
+		FString MainPySha;
+		FString FailureReason;
+		TaskAtlasServiceReadMainPy(Tool, MainPy, MainPyBytes, MainPySha, FailureReason);
+
+		TSharedPtr<FJsonObject> MarkerObject = MakeShared<FJsonObject>();
+		const TSharedPtr<FJsonObject>* ExistingMarker = nullptr;
+		if (Tool.ToolJson.IsValid()
+			&& Tool.ToolJson->TryGetObjectField(TEXT("vettedMarker"), ExistingMarker)
+			&& ExistingMarker
+			&& (*ExistingMarker).IsValid())
+		{
+			MarkerObject->Values = (*ExistingMarker)->Values;
+		}
+		if (!MarkerObject->HasField(TEXT("schemaVersion")))
+		{
+			MarkerObject->SetNumberField(TEXT("schemaVersion"), 1);
+		}
+		if (!MarkerObject->HasField(TEXT("mainPySha256")) && !MainPySha.IsEmpty())
+		{
+			MarkerObject->SetStringField(TEXT("mainPySha256"), MainPySha);
+		}
+		MarkerObject->SetBoolField(TEXT("vetted"), false);
+		MarkerObject->SetStringField(TEXT("revokedBy"), EffectiveApprover);
+		MarkerObject->SetStringField(TEXT("revokedAtUtc"), FDateTime::UtcNow().ToIso8601());
+		MarkerObject->SetStringField(TEXT("revokeReason"), Reason.TrimStartAndEnd());
+		Tool.ToolJson->SetObjectField(TEXT("vettedMarker"), MarkerObject);
+
+		if (!TaskAtlasServiceWriteJsonObjectAtomicSameDir(Tool.ToolJson, Tool.ToolJsonPath, FailureReason))
+		{
+			return Fail(TEXT("marker_write"), FailureReason);
+		}
+
+		UserRegistry::FReloadResult ReloadResult = TaskAtlasServiceReloadUserRegistry(true);
+		TArray<FString> ReloadRejectedReasons;
+		bool bTargetRejected = false;
+		TaskAtlasServiceCollectReloadRejections(ReloadResult, Tool.ToolName, ReloadRejectedReasons, bTargetRejected);
+		if (bTargetRejected)
+		{
+			return Fail(TEXT("reload"), FString::Join(ReloadRejectedReasons, TEXT("; ")));
+		}
+
+		TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+		Payload->SetStringField(TEXT("toolName"), Tool.ToolName);
+		Payload->SetStringField(TEXT("approver"), EffectiveApprover);
+		Payload->SetStringField(TEXT("reason"), Reason.TrimStartAndEnd());
+		FActivityLogEvent Event;
+		Event.EventKind = TEXT("toolset_unvetted");
+		Event.Summary = FString::Printf(TEXT("Task Atlas made tool %s vetted authority revoked."), *Tool.ToolName);
+		Event.Payload = Payload;
+		if (!TaskAtlasServiceTryWriteVetAuditEvent(Event, FailureReason))
+		{
+			UE_LOG(LogUnrealMcp, Error, TEXT("Failed to audit made-tool revocation for %s: %s"), *Tool.ToolName, *FailureReason);
+		}
+
+		Result.bRevoked = true;
+		return Result;
+	}
+
 	TArray<FUserToolView> IntrospectUserRegistry()
 	{
 		TArray<FUserToolView> Views;
@@ -2348,6 +2974,25 @@ namespace UnrealMcp::TaskAtlasService
 			View.ToolJsonPath = TaskAtlasServiceMakeDisplayPath(FPaths::Combine(Entry->ScaffoldDir, TEXT("tool.json")));
 			View.PythonPath = TaskAtlasServiceMakeDisplayPath(Entry->PythonHandlerPath);
 			View.bLoaded = true;
+			FString LivePythonSha = Entry->PythonHandlerSha256;
+			TArray<uint8> LivePythonBytes;
+			if (FFileHelper::LoadFileToArray(LivePythonBytes, *Entry->PythonHandlerPath))
+			{
+				LivePythonSha = HashUtils::Sha256LowerHex(LivePythonBytes).ToLower();
+			}
+			TaskAtlasServicePopulateVettedFieldsFromJson(
+				Entry->ToolJson,
+				LivePythonSha,
+				View.bVettedMarkerPresent,
+				View.bVetted,
+				View.MarkerSha,
+				View.bLiveShaMatches,
+				View.AiReviewVerdict,
+				View.SmokeStatus,
+				View.Approver,
+				View.ApprovedAtUtc,
+				View.RevokedBy,
+				View.RevokedAtUtc);
 
 			if (Entry->ToolJson.IsValid())
 			{

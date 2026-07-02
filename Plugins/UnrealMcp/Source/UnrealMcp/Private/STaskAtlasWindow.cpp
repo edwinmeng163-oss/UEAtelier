@@ -8,7 +8,9 @@
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "Framework/Application/SlateApplication.h"
 #include "HAL/FileManager.h"
+#include "HAL/PlatformProcess.h"
 #include "Misc/FileHelper.h"
 #include "Misc/MessageDialog.h"
 #include "Misc/Paths.h"
@@ -18,14 +20,17 @@
 #include "Serialization/JsonWriter.h"
 #include "Styling/AppStyle.h"
 #include "Widgets/Input/SButton.h"
+#include "Widgets/Input/SCheckBox.h"
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Layout/SSeparator.h"
 #include "Widgets/Layout/SSplitter.h"
+#include "Widgets/Layout/SUniformGridPanel.h"
 #include "Widgets/Layout/SWrapBox.h"
 #include "Widgets/SBoxPanel.h"
+#include "Widgets/SWindow.h"
 #include "Widgets/Text/STextBlock.h"
 
 #define LOCTEXT_NAMESPACE "TaskAtlasWindow"
@@ -1355,6 +1360,246 @@ FReply STaskAtlasWindow::HandleTestNowClicked(FString ToolName)
 	return FReply::Handled();
 }
 
+bool STaskAtlasWindow::ShowApproveRealWritesDialog(
+	const FString& ToolName,
+	const UnrealMcp::TaskAtlasService::FVetImpactDescription& Impact,
+	FString& OutSummary,
+	FString& OutApprover)
+{
+	bool bAccepted = false;
+	TSharedPtr<SEditableTextBox> SummaryTextBox;
+	TSharedPtr<SEditableTextBox> ApproverTextBox;
+	TSharedPtr<SCheckBox> ReviewPassCheckBox;
+
+	FString DangerousText;
+	if (Impact.DangerousTools.Num() == 0)
+	{
+		DangerousText = TEXT("(none classified as dangerous)");
+	}
+	else
+	{
+		for (const FString& Tool : Impact.DangerousTools)
+		{
+			DangerousText += FString::Printf(TEXT("- %s\n"), *Tool);
+		}
+		DangerousText.RemoveFromEnd(TEXT("\n"));
+	}
+
+	TSharedRef<SWindow> Window = SNew(SWindow)
+		.Title(LOCTEXT("ApproveRealWritesDialogTitle", "Approve Real Writes"))
+		.ClientSize(FVector2D(680.0f, 420.0f))
+		.SupportsMaximize(false)
+		.SupportsMinimize(false);
+
+	Window->SetContent(
+		SNew(SBorder)
+		.BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder"))
+		.Padding(10.0f)
+		[
+			SNew(SVerticalBox)
+			+ SVerticalBox::Slot()
+			.AutoHeight()
+			.Padding(0.0f, 0.0f, 0.0f, 8.0f)
+			[
+				SNew(STextBlock)
+				.AutoWrapText(true)
+				.Font(FAppStyle::GetFontStyle("NormalFontBold"))
+				.Text(FText::FromString(ToolName))
+			]
+			+ SVerticalBox::Slot()
+			.AutoHeight()
+			.Padding(0.0f, 0.0f, 0.0f, 8.0f)
+			[
+				SNew(STextBlock)
+				.AutoWrapText(true)
+				.ColorAndOpacity(FSlateColor::UseSubduedForeground())
+				.Text(FText::FromString(FString::Printf(TEXT("main.py sha: %s"), *Impact.MainPySha256)))
+			]
+			+ SVerticalBox::Slot()
+			.FillHeight(1.0f)
+			.Padding(0.0f, 0.0f, 0.0f, 8.0f)
+			[
+				SNew(SScrollBox)
+				+ SScrollBox::Slot()
+				[
+					SNew(STextBlock)
+					.AutoWrapText(true)
+					.Text(FText::FromString(FString::Printf(TEXT("Dangerous steps:\n%s"), *DangerousText)))
+				]
+			]
+			+ SVerticalBox::Slot()
+			.AutoHeight()
+			.Padding(0.0f, 0.0f, 0.0f, 6.0f)
+			[
+				SNew(STextBlock)
+				.Text(LOCTEXT("AiReviewSummaryLabel", "AI safety-review summary"))
+				.Font(FAppStyle::GetFontStyle("SmallFont"))
+			]
+			+ SVerticalBox::Slot()
+			.AutoHeight()
+			.Padding(0.0f, 0.0f, 0.0f, 8.0f)
+			[
+				SAssignNew(SummaryTextBox, SEditableTextBox)
+				.HintText(LOCTEXT("AiReviewSummaryHint", "Required review summary for this exact main.py"))
+				.SelectAllTextWhenFocused(true)
+			]
+			+ SVerticalBox::Slot()
+			.AutoHeight()
+			.Padding(0.0f, 0.0f, 0.0f, 8.0f)
+			[
+				SAssignNew(ReviewPassCheckBox, SCheckBox)
+				[
+					SNew(STextBlock)
+					.Text(LOCTEXT("AiReviewPassCheckbox", "I have an AI safety-review pass for this exact code"))
+				]
+			]
+			+ SVerticalBox::Slot()
+			.AutoHeight()
+			.Padding(0.0f, 0.0f, 0.0f, 6.0f)
+			[
+				SNew(STextBlock)
+				.Text(LOCTEXT("ApproverLabel", "Approver"))
+				.Font(FAppStyle::GetFontStyle("SmallFont"))
+			]
+			+ SVerticalBox::Slot()
+			.AutoHeight()
+			.Padding(0.0f, 0.0f, 0.0f, 8.0f)
+			[
+				SAssignNew(ApproverTextBox, SEditableTextBox)
+				.Text(FText::FromString(FPlatformProcess::UserName()))
+				.SelectAllTextWhenFocused(true)
+			]
+			+ SVerticalBox::Slot()
+			.AutoHeight()
+			.Padding(0.0f, 0.0f, 0.0f, 10.0f)
+			[
+				SNew(STextBlock)
+				.AutoWrapText(true)
+				.ColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.58f, 0.12f)))
+				.Text(LOCTEXT("ApproveRealWritesWarning", "Approving runs this toolset once for real (vetted-context test run) - its write steps will execute on the open level and be audited."))
+			]
+			+ SVerticalBox::Slot()
+			.AutoHeight()
+			.HAlign(HAlign_Right)
+			[
+				SNew(SUniformGridPanel)
+				.SlotPadding(FMargin(4.0f, 0.0f))
+				+ SUniformGridPanel::Slot(0, 0)
+				[
+					SNew(SButton)
+					.Text(LOCTEXT("ApproveRealWritesCancel", "Cancel"))
+					.OnClicked_Lambda([Window]()
+					{
+						Window->RequestDestroyWindow();
+						return FReply::Handled();
+					})
+				]
+				+ SUniformGridPanel::Slot(1, 0)
+				[
+					SNew(SButton)
+					.Text(LOCTEXT("ApproveRealWritesConfirm", "Approve"))
+					.OnClicked_Lambda([Window, &bAccepted, &SummaryTextBox, &ApproverTextBox, &ReviewPassCheckBox, &OutSummary, &OutApprover]()
+					{
+						const bool bChecked = ReviewPassCheckBox.IsValid() && ReviewPassCheckBox->IsChecked();
+						const FString Summary = SummaryTextBox.IsValid() ? SummaryTextBox->GetText().ToString().TrimStartAndEnd() : FString();
+						const FString Approver = ApproverTextBox.IsValid() ? ApproverTextBox->GetText().ToString().TrimStartAndEnd() : FString();
+						if (!bChecked || Summary.IsEmpty() || Approver.IsEmpty())
+						{
+							FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("ApproveRealWritesRequiredFields", "Review pass, summary, and approver are required."));
+							return FReply::Handled();
+						}
+						OutSummary = Summary;
+						OutApprover = Approver;
+						bAccepted = true;
+						Window->RequestDestroyWindow();
+						return FReply::Handled();
+					})
+				]
+			]
+		]);
+
+	FSlateApplication::Get().AddModalWindow(Window, AsShared());
+	return bAccepted;
+}
+
+FReply STaskAtlasWindow::HandleApproveRealWritesClicked(FString ToolName)
+{
+	if (!OwnerModule)
+	{
+		SetStatus(TEXT("Task Atlas is not connected to the module."));
+		return FReply::Handled();
+	}
+
+	const UnrealMcp::TaskAtlasService::FVetImpactDescription Impact = UnrealMcp::TaskAtlasService::DescribeVetImpact(ToolName);
+	if (!Impact.bResolved)
+	{
+		SetStatus(FString::Printf(TEXT("Cannot approve %s: %s"), *ToolName, *Impact.FailureDetail));
+		return FReply::Handled();
+	}
+
+	FString Summary;
+	FString Approver;
+	if (!ShowApproveRealWritesDialog(ToolName, Impact, Summary, Approver))
+	{
+		return FReply::Handled();
+	}
+
+	UnrealMcp::TaskAtlasService::FVetMadeToolRequest Req;
+	Req.ToolName = ToolName;
+	Req.AiReviewVerdict = TEXT("pass");
+	Req.AiReviewSummary = Summary;
+	Req.Approver = Approver;
+	const UnrealMcp::TaskAtlasService::FVetMadeToolResult Result = UnrealMcp::TaskAtlasService::VetMadeTool(Req);
+	if (Result.bVetted)
+	{
+		SetStatus(FString::Printf(TEXT("Approved real writes for %s at sha %s."), *ToolName, *Result.MainPySha256));
+	}
+	else
+	{
+		SetStatus(FString::Printf(TEXT("Approve failed at %s: %s"), *Result.FailureStage, *Result.FailureDetail));
+	}
+
+	RefreshMadeTools();
+	RebuildLists();
+	return FReply::Handled();
+}
+
+FReply STaskAtlasWindow::HandleRevokeMadeToolClicked(FString ToolName)
+{
+	if (!OwnerModule)
+	{
+		SetStatus(TEXT("Task Atlas is not connected to the module."));
+		return FReply::Handled();
+	}
+
+	const EAppReturnType::Type Response = FMessageDialog::Open(
+		EAppMsgType::YesNo,
+		FText::Format(
+			LOCTEXT("ConfirmRevokeMadeTool", "Revoke vetted real-write authority for '{0}'?"),
+			FText::FromString(ToolName)));
+	if (Response != EAppReturnType::Yes)
+	{
+		return FReply::Handled();
+	}
+
+	const UnrealMcp::TaskAtlasService::FRevokeMadeToolResult Result = UnrealMcp::TaskAtlasService::RevokeMadeTool(
+		ToolName,
+		FPlatformProcess::UserName(),
+		TEXT("revoked from Task Atlas UI"));
+	if (Result.bRevoked)
+	{
+		SetStatus(FString::Printf(TEXT("Revoked vetted authority for %s."), *ToolName));
+	}
+	else
+	{
+		SetStatus(FString::Printf(TEXT("Revoke failed at %s: %s"), *Result.FailureStage, *Result.FailureDetail));
+	}
+
+	RefreshMadeTools();
+	RebuildLists();
+	return FReply::Handled();
+}
+
 FReply STaskAtlasWindow::HandleDebugClicked()
 {
 	const TArray<UnrealMcp::TaskAtlasService::FUserToolView> Views = UnrealMcp::TaskAtlasService::IntrospectUserRegistry();
@@ -1444,6 +1689,16 @@ void STaskAtlasWindow::RefreshMadeTools()
 		Row.SourceTaskId = Entry.SourceTaskId;
 		Row.bLoaded = Entry.bLoadedInUserRegistry;
 		Row.bHasFailureMarker = Entry.bHasFailureMarker;
+		Row.bVettedMarkerPresent = Entry.bVettedMarkerPresent;
+		Row.bVetted = Entry.bVetted;
+		Row.bLiveShaMatches = Entry.bLiveShaMatches;
+		Row.MarkerSha = Entry.MarkerSha;
+		Row.AiReviewVerdict = Entry.AiReviewVerdict;
+		Row.SmokeStatus = Entry.SmokeStatus;
+		Row.Approver = Entry.Approver;
+		Row.ApprovedAtUtc = Entry.ApprovedAtUtc;
+		Row.RevokedBy = Entry.RevokedBy;
+		Row.RevokedAtUtc = Entry.RevokedAtUtc;
 		MadeTools.Add(Row);
 	}
 
@@ -1705,6 +1960,16 @@ TSharedRef<SWidget> STaskAtlasWindow::BuildUnusedToolRow(const FToolRow& Row)
 
 TSharedRef<SWidget> STaskAtlasWindow::BuildMadeToolRow(const FMadeToolRow& Row)
 {
+	const FString VetStatus = Row.bVetted
+		? (Row.bLiveShaMatches ? FString(TEXT("VETTED")) : FString(TEXT("stale-vetted (hash drift)")))
+		: (Row.RevokedAtUtc.IsEmpty() ? FString(TEXT("not vetted")) : FString::Printf(TEXT("revoked by %s"), *Row.RevokedBy));
+	const FSlateColor VetColor = Row.bVetted
+		? (Row.bLiveShaMatches ? FSlateColor(FLinearColor(0.2f, 0.75f, 0.32f)) : FSlateColor(FLinearColor(1.0f, 0.58f, 0.12f)))
+		: FSlateColor::UseSubduedForeground();
+	const FOnClicked VetClicked = Row.bVetted
+		? FOnClicked::CreateSP(this, &STaskAtlasWindow::HandleRevokeMadeToolClicked, Row.ToolName)
+		: FOnClicked::CreateSP(this, &STaskAtlasWindow::HandleApproveRealWritesClicked, Row.ToolName);
+
 	return SNew(SBorder)
 		.BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder"))
 		.Padding(6.0f)
@@ -1734,6 +1999,15 @@ TSharedRef<SWidget> STaskAtlasWindow::BuildMadeToolRow(const FMadeToolRow& Row)
 						*Row.CompositeKind,
 						*Row.RelativeScaffoldDir)))
 				]
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				.Padding(0.0f, 3.0f, 0.0f, 0.0f)
+				[
+					SNew(STextBlock)
+					.AutoWrapText(true)
+					.ColorAndOpacity(VetColor)
+					.Text(FText::FromString(VetStatus))
+				]
 			]
 			+ SHorizontalBox::Slot()
 			.AutoWidth()
@@ -1748,6 +2022,15 @@ TSharedRef<SWidget> STaskAtlasWindow::BuildMadeToolRow(const FMadeToolRow& Row)
 					.Text(LOCTEXT("TestNow", "Test Now"))
 					.ToolTipText(LOCTEXT("TestNowTooltip", "Run user-tool smoke (real execution)"))
 					.OnClicked(this, &STaskAtlasWindow::HandleTestNowClicked, Row.ToolName)
+				]
+				+ SWrapBox::Slot()
+				[
+					SNew(SButton)
+					.Text(Row.bVetted ? LOCTEXT("RevokeVettedTool", "Revoke") : LOCTEXT("ApproveRealWrites", "Approve real writes"))
+					.ToolTipText(Row.bVetted
+						? LOCTEXT("RevokeVettedToolTooltip", "Remove vetted real-write authority for this made tool.")
+						: LOCTEXT("ApproveRealWritesTooltip", "Run the vetted-context smoke and persist a human-approved vetted marker."))
+					.OnClicked(VetClicked)
 				]
 				+ SWrapBox::Slot()
 				[

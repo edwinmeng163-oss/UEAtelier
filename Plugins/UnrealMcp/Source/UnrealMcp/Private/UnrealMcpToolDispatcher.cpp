@@ -209,6 +209,16 @@ namespace UnrealMcp
 			Object->SetBoolField(TEXT("loadedInUserRegistry"), Entry.bLoadedInUserRegistry);
 			Object->SetBoolField(TEXT("hasFailureMarker"), bIncludeFailureMarkers && Entry.bHasFailureMarker);
 			Object->SetStringField(TEXT("failureDiagnosticPath"), bIncludeFailureMarkers ? Entry.FailureDiagnosticPath : FString());
+			Object->SetBoolField(TEXT("vettedMarkerPresent"), Entry.bVettedMarkerPresent);
+			Object->SetBoolField(TEXT("vetted"), Entry.bVetted);
+			Object->SetStringField(TEXT("markerSha"), Entry.MarkerSha);
+			Object->SetBoolField(TEXT("liveShaMatches"), Entry.bLiveShaMatches);
+			Object->SetStringField(TEXT("aiReviewVerdict"), Entry.AiReviewVerdict);
+			Object->SetStringField(TEXT("smokeStatus"), Entry.SmokeStatus);
+			Object->SetStringField(TEXT("approver"), Entry.Approver);
+			Object->SetStringField(TEXT("approvedAtUtc"), Entry.ApprovedAtUtc);
+			Object->SetStringField(TEXT("revokedBy"), Entry.RevokedBy);
+			Object->SetStringField(TEXT("revokedAtUtc"), Entry.RevokedAtUtc);
 			return Object;
 		}
 
@@ -230,6 +240,16 @@ namespace UnrealMcp
 			Object->SetBoolField(TEXT("loaded"), View.bLoaded);
 			Object->SetBoolField(TEXT("rejected"), View.bRejected);
 			Object->SetStringField(TEXT("rejectionReason"), View.RejectionReason);
+			Object->SetBoolField(TEXT("vettedMarkerPresent"), View.bVettedMarkerPresent);
+			Object->SetBoolField(TEXT("vetted"), View.bVetted);
+			Object->SetStringField(TEXT("markerSha"), View.MarkerSha);
+			Object->SetBoolField(TEXT("liveShaMatches"), View.bLiveShaMatches);
+			Object->SetStringField(TEXT("aiReviewVerdict"), View.AiReviewVerdict);
+			Object->SetStringField(TEXT("smokeStatus"), View.SmokeStatus);
+			Object->SetStringField(TEXT("approver"), View.Approver);
+			Object->SetStringField(TEXT("approvedAtUtc"), View.ApprovedAtUtc);
+			Object->SetStringField(TEXT("revokedBy"), View.RevokedBy);
+			Object->SetStringField(TEXT("revokedAtUtc"), View.RevokedAtUtc);
 			if (bIncludeToolJson)
 			{
 				TSharedPtr<FJsonObject> SanitizedToolJson = MakeShared<FJsonObject>();
@@ -237,6 +257,10 @@ namespace UnrealMcp
 				SanitizedToolJson->SetStringField(TEXT("sourceKind"), View.SourceKind);
 				SanitizedToolJson->SetStringField(TEXT("sourceTaskId"), View.SourceTaskId);
 				SanitizedToolJson->SetStringField(TEXT("pythonHandlerSha256"), bIncludePythonSha ? View.PythonSha : FString());
+				SanitizedToolJson->SetBoolField(TEXT("vettedMarkerPresent"), View.bVettedMarkerPresent);
+				SanitizedToolJson->SetBoolField(TEXT("vetted"), View.bVetted);
+				SanitizedToolJson->SetStringField(TEXT("markerSha"), View.MarkerSha);
+				SanitizedToolJson->SetBoolField(TEXT("liveShaMatches"), View.bLiveShaMatches);
 				Object->SetObjectField(TEXT("toolJson"), SanitizedToolJson);
 			}
 			return Object;

@@ -6,6 +6,7 @@
 
 class FJsonObject;
 class FUnrealMcpModule;
+class SCheckBox;
 class SEditableTextBox;
 class STextBlock;
 class SVerticalBox;
@@ -56,6 +57,16 @@ public:
 		FString SourceTaskId;
 		bool bLoaded = false;
 		bool bHasFailureMarker = false;
+		bool bVettedMarkerPresent = false;
+		bool bVetted = false;
+		bool bLiveShaMatches = false;
+		FString MarkerSha;
+		FString AiReviewVerdict;
+		FString SmokeStatus;
+		FString Approver;
+		FString ApprovedAtUtc;
+		FString RevokedBy;
+		FString RevokedAtUtc;
 	};
 
 private:
@@ -68,6 +79,8 @@ private:
 	FReply HandleToolClicked(FString ToolName);
 	FReply HandleDeleteMadeToolClicked(FString ToolName);
 	FReply HandleTestNowClicked(FString ToolName);
+	FReply HandleApproveRealWritesClicked(FString ToolName);
+	FReply HandleRevokeMadeToolClicked(FString ToolName);
 	FReply HandleDebugClicked();
 
 	void RefreshData();
@@ -77,6 +90,7 @@ private:
 	TSharedRef<SWidget> BuildUnusedToolRow(const FToolRow& Row);
 	TSharedRef<SWidget> BuildMadeToolRow(const FMadeToolRow& Row);
 	TSharedRef<SWidget> BuildToolNameButton(const FString& ToolName);
+	bool ShowApproveRealWritesDialog(const FString& ToolName, const UnrealMcp::TaskAtlasService::FVetImpactDescription& Impact, FString& OutSummary, FString& OutApprover);
 	void ShowToolDetails(const FString& ToolName);
 	bool WorkflowMatchesSearch(const FWorkflowRow& Row) const;
 	bool ToolMatchesSearch(const FToolRow& Row) const;
