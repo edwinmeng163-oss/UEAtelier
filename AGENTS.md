@@ -192,7 +192,32 @@ CLI <-> Chat Panel sync tools (chat_inject_user_input, chat_history_tail,
 chat_tool_log_tail) and hardens Task Atlas eligibility against external-client
 registry-miss noise.
 
-Current project status: v0.32.2 (2026-06-11) is an MCP protocol conformance
+Current project status: v0.33.0-preview (2026-07-03) is the UE5.8 official-MCP
+VALIDATION build on `experiment/v0.33-ue58-validation` — EXPERIMENTAL, never
+merges to main as-is; the public line is v0.34.0 (UE 5.6/5.7). It layers UE
+5.8's first-party MCP additively behind `UNREALMCP_HAS_OFFICIAL_TOOLSETS`
+(5.6/5.7 byte-unaffected; gate-exclusion builds prove zero official-API
+references): opt-in official `:8000` server (Workbench toggle or
+`ModelContextProtocol.StartServer/StopServer`; stateful streamable-HTTP with
+`Mcp-Session-Id` + list_toolsets/describe_toolset/call_tool meta-tools);
+official Python ToolsetDefinition generation from Task Atlas
+(`emitOfficial`, C1/C2); the C++ UToolsetDefinition draft path
+(`officialVariant:"cpp"`: emitter + allowlist validator + manifest/schemaHash
++ post-publish drift detector + explicit project-mounted UBT build probe,
+restart-required, no auto-install/registration claims — C3); and
+instruction-only AgentSkill promotion for made tools via the engine
+AgentSkillToolset through UToolsetRegistry::ExecuteTool, recorded as
+`agentSkillPath` and removable (C4). Delegation-through-policy is mandatory
+everywhere: generated tool bodies call back into UEAtelier's call_tool
+executor and every real write is audited. Verified: official suites 13/13;
+UE5.6+5.7+5.8 builds; live `:8000` post-restart proof incl. delegation +
+audit + `:8765` coexistence. Tool count stays 190. Preview notes at
+`Docs/Release-2026-07b.md`. Known caveats: interactive-editor
+automation_list/run see zero tests (commandlets authoritative); official
+server stop leaves the port bound by the engine's shared HTTP listener
+(route is removed); Spike 3 (MCPClientToolset -> :8765) not run.
+
+Earlier project status: v0.32.2 (2026-06-11) is an MCP protocol conformance
 patch on v0.32.1. codex-cli 0.132 moved its MCP client to the official rmcp
 0.15 Rust SDK, whose strict untagged-result parsing mis-read our tools/list
 response — it carried a non-spec top-level `structuredContent`
