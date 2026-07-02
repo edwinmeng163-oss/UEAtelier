@@ -293,6 +293,79 @@ bool FUnrealMcpOfficialCppToolsetWriterRejectsCollisionTest::RunTest(const FStri
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FUnrealMcpOfficialCppToolsetDriftDetectorTest,
+	"UnrealMcp.OfficialCppToolset.DriftDetector",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FUnrealMcpOfficialCppToolsetDriftDetectorTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace UnrealMcpOfficialCppToolsetEmitterTests;
+
+	const FString ToolId = FString(TEXT("codex_cpp_drift_")) + FGuid::NewGuid().ToString(EGuidFormats::Digits).Left(8).ToLower();
+	IFileManager::Get().DeleteDirectory(*DraftDir(ToolId), false, true);
+	ON_SCOPE_EXIT
+	{
+		IFileManager::Get().DeleteDirectory(*DraftDir(ToolId), false, true);
+	};
+
+	UnrealMcp::TaskAtlasOfficialCpp::FOfficialCppToolsetDraftRequest Request;
+	Request.ToolId = ToolId;
+	Request.Title = TEXT("Official C++ Drift Test");
+	Request.Description = TEXT("Drift detector test draft.");
+	Request.TaskId = TaskId;
+	Request.CriticalPath = CriticalPathForFixture();
+	Request.StepRefs = StepRefsForFixture();
+	Request.VisibleCoreToolNames = VisibleCoreToolsForFixture();
+
+	const UnrealMcp::TaskAtlasOfficialCpp::FOfficialCppToolsetDraftResult DraftResult =
+		UnrealMcp::TaskAtlasOfficialCpp::GenerateOfficialCppToolsetDraft(Request);
+	TestTrue(TEXT("draft succeeds"), DraftResult.bSucceeded);
+	if (!DraftResult.bSucceeded)
+	{
+		AddError(DraftResult.ErrorMessage);
+		return false;
+	}
+
+	const UnrealMcp::TaskAtlasOfficialCpp::FOfficialCppToolsetDriftResult Clean =
+		UnrealMcp::TaskAtlasOfficialCpp::DetectOfficialCppToolsetDraftDrift(DraftResult.GeneratedDir);
+	TestTrue(TEXT("fresh draft is clean"), Clean.bClean);
+	if (!Clean.bClean)
+	{
+		AddError(FString::Join(Clean.Drifts, TEXT("\n")));
+	}
+
+	TestTrue(TEXT("draft has source files"), DraftResult.SourceFiles.Num() > 0);
+	if (DraftResult.SourceFiles.Num() == 0)
+	{
+		return false;
+	}
+	const FString TamperTarget = DraftResult.SourceFiles[0];
+	FString TamperContents;
+	TestTrue(TEXT("tamper target readable"), FFileHelper::LoadFileToString(TamperContents, *TamperTarget));
+	TamperContents += TEXT("\n// post-publish tamper\n");
+	TestTrue(TEXT("tamper write ok"), FFileHelper::SaveStringToFile(TamperContents, *TamperTarget));
+
+	const UnrealMcp::TaskAtlasOfficialCpp::FOfficialCppToolsetDriftResult Tampered =
+		UnrealMcp::TaskAtlasOfficialCpp::DetectOfficialCppToolsetDraftDrift(DraftResult.GeneratedDir);
+	TestFalse(TEXT("tampered draft is not clean"), Tampered.bClean);
+	bool bSawHashDrift = false;
+	for (const FString& Drift : Tampered.Drifts)
+	{
+		bSawHashDrift |= Drift.StartsWith(TEXT("file_hash_drift:"));
+	}
+	TestTrue(TEXT("hash drift reported"), bSawHashDrift);
+
+	TestTrue(TEXT("manifest delete ok"), IFileManager::Get().Delete(*DraftResult.ManifestPath, false, true));
+	const UnrealMcp::TaskAtlasOfficialCpp::FOfficialCppToolsetDriftResult NoManifest =
+		UnrealMcp::TaskAtlasOfficialCpp::DetectOfficialCppToolsetDraftDrift(DraftResult.GeneratedDir);
+	TestFalse(TEXT("missing manifest is not clean"), NoManifest.bClean);
+	TestTrue(TEXT("missing manifest reported"), NoManifest.Drifts.Num() == 1 && NoManifest.Drifts[0].StartsWith(TEXT("manifest_missing:")));
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FUnrealMcpOfficialCppToolsetInvalidToolIdRejectedTest,
 	"UnrealMcp.OfficialCppToolset.InvalidToolIdRejected",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

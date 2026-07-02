@@ -1235,6 +1235,79 @@ namespace UnrealMcp::TaskAtlasOfficialCpp
 		Result.bSucceeded = true;
 		return Result;
 	}
+
+	FOfficialCppToolsetDriftResult DetectOfficialCppToolsetDraftDrift(const FString& GeneratedDir)
+	{
+		FOfficialCppToolsetDriftResult Result;
+		const FString ManifestPath = FPaths::Combine(GeneratedDir, TEXT("manifest.json"));
+
+		FString ManifestText;
+		if (!FPaths::FileExists(ManifestPath) || !FFileHelper::LoadFileToString(ManifestText, *ManifestPath))
+		{
+			Result.Drifts.Add(TEXT("manifest_missing: manifest.json absent or unreadable"));
+			return Result;
+		}
+
+		TSharedPtr<FJsonObject> Manifest;
+		const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ManifestText);
+		if (!FJsonSerializer::Deserialize(Reader, Manifest) || !Manifest.IsValid())
+		{
+			Result.Drifts.Add(TEXT("manifest_unparsable: manifest.json is not valid JSON"));
+			return Result;
+		}
+
+		FString SchemaHash;
+		Manifest->TryGetStringField(TEXT("schemaHash"), SchemaHash);
+		if (SchemaHash.TrimStartAndEnd().IsEmpty())
+		{
+			Result.Drifts.Add(TEXT("schema_hash_missing: manifest schemaHash is empty"));
+		}
+
+		const TArray<TSharedPtr<FJsonValue>>* FileValues = nullptr;
+		if (!Manifest->TryGetArrayField(TEXT("files"), FileValues) || FileValues == nullptr || FileValues->Num() == 0)
+		{
+			Result.Drifts.Add(TEXT("manifest_files_missing: manifest files array absent or empty"));
+			Result.bClean = Result.Drifts.Num() == 0;
+			return Result;
+		}
+
+		for (const TSharedPtr<FJsonValue>& Value : *FileValues)
+		{
+			const TSharedPtr<FJsonObject>* FileObject = nullptr;
+			if (!Value.IsValid() || !Value->TryGetObject(FileObject) || FileObject == nullptr || !FileObject->IsValid())
+			{
+				Result.Drifts.Add(TEXT("manifest_file_entry_malformed: non-object entry in files array"));
+				continue;
+			}
+
+			FString RelativePath;
+			FString ExpectedSha;
+			(*FileObject)->TryGetStringField(TEXT("relativePath"), RelativePath);
+			(*FileObject)->TryGetStringField(TEXT("sha256"), ExpectedSha);
+			if (RelativePath.TrimStartAndEnd().IsEmpty() || ExpectedSha.TrimStartAndEnd().IsEmpty())
+			{
+				Result.Drifts.Add(TEXT("manifest_file_entry_malformed: entry missing relativePath or sha256"));
+				continue;
+			}
+
+			const FString AbsolutePath = FPaths::Combine(GeneratedDir, RelativePath);
+			FString LiveContents;
+			if (!FPaths::FileExists(AbsolutePath) || !FFileHelper::LoadFileToString(LiveContents, *AbsolutePath))
+			{
+				Result.Drifts.Add(FString::Printf(TEXT("file_missing: %s"), *RelativePath));
+				continue;
+			}
+
+			const FString LiveSha = UnrealMcp::HashUtils::Sha256LowerHexFromUtf8(LiveContents);
+			if (!LiveSha.Equals(ExpectedSha.TrimStartAndEnd().ToLower(), ESearchCase::CaseSensitive))
+			{
+				Result.Drifts.Add(FString::Printf(TEXT("file_hash_drift: %s"), *RelativePath));
+			}
+		}
+
+		Result.bClean = Result.Drifts.Num() == 0;
+		return Result;
+	}
 }
 
 #endif

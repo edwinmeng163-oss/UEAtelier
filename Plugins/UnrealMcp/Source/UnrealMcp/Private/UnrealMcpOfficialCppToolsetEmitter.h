@@ -92,5 +92,17 @@ namespace UnrealMcp::TaskAtlasOfficialCpp
 		TArray<FString>& OutIssues);
 
 	FOfficialCppToolsetDraftResult GenerateOfficialCppToolsetDraft(const FOfficialCppToolsetDraftRequest& Req);
+
+	struct FOfficialCppToolsetDriftResult
+	{
+		bool bClean = false;
+		TArray<FString> Drifts;
+	};
+
+	// C4 drift detector: re-verify a PUBLISHED draft directory against its own
+	// manifest (catches post-publish edits to generated files or the manifest).
+	// Absent/unreadable manifest and hash mismatches are reported as drift
+	// entries, never as hard errors.
+	FOfficialCppToolsetDriftResult DetectOfficialCppToolsetDraftDrift(const FString& GeneratedDir);
 #endif
 }
