@@ -25,6 +25,12 @@ namespace UnrealMcp
 		FString Reason;
 	};
 
+	struct FCompositeSourcePolicyResult
+	{
+		bool bPassed = false;
+		TArray<FString> Violations;
+	};
+
 	UNREALMCP_API TSharedPtr<FJsonObject> SerializeVettedToolsetMarker(const FVettedToolsetMarker& Marker);
 	UNREALMCP_API FVettedToolsetMarker DeserializeVettedToolsetMarker(const TSharedPtr<FJsonObject>& ManifestJson);
 	UNREALMCP_API FVettedToolsetVerificationResult VerifyVettedToolset_Pure(
@@ -33,6 +39,13 @@ namespace UnrealMcp
 	UNREALMCP_API FVettedToolsetVerificationResult VerifyVettedToolsetSha_Pure(
 		const FVettedToolsetMarker& Marker,
 		const FString& LiveMainPyShaLowerHex);
+	// Fail-closed heuristic scan for generated composite main.py files. This is
+	// intentionally not a Python AST parser; runtime import hooks and human review
+	// remain the final backstops, and over-blocking is preferable to under-blocking.
+	// Dunder tokens are banned even inside strings; other forbidden code tokens are
+	// scanned with ordinary string contents blanked to allow quoted tool names.
+	UNREALMCP_API FCompositeSourcePolicyResult ValidateCompositeSourcePolicy_Pure(const FString& MainPyUtf8);
+	UNREALMCP_API FCompositeSourcePolicyResult IsImportAllowlistVettable_Pure(const TArray<FString>& ImportAllowlist);
 
 	class UNREALMCP_API FVettedToolsetScope
 	{
