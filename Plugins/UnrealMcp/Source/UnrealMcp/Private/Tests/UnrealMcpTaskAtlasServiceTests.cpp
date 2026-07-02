@@ -673,13 +673,22 @@ bool FUnrealMcpUserToolListVersionSmokeFailedTest::RunTest(const FString& Parame
 	using namespace UnrealMcpTaskAtlasServiceTests;
 
 	const FChunk4Fixture Fixture = SetupChunk4Fixture(TEXT("Version/SmokeFailed"));
+	const FString PyRoot = RegistryUserToolsRoot();
+	UnrealMcp::TaskAtlasService::SetMadeToolsRootDirForTests(PyRoot);
+	DeleteChunk4RegistryTools();
+	ReloadUserRegistryForTests();
 	ON_SCOPE_EXIT
 	{
-		ClearChunk4Fixture(Fixture);
+		UnrealMcp::TaskAtlasService::ClearMadeToolsRootDirForTests();
+		UnrealMcp::TaskAtlasService::ClearSavedRootDirForTests();
+		DeleteChunk4RegistryTools();
+		ReloadUserRegistryForTests();
+		IFileManager::Get().DeleteDirectory(*Fixture.Root, false, true);
 	};
 
 	const FString ToolId = Chunk4ToolPrefix + TEXT("version_smoke_failed");
-	TestTrue(TEXT("smoke fail fixture writes"), WriteGeneratedToolWithPython(Fixture.PyToolsRoot, ToolId, Chunk4RaisePy));
+	TestTrue(TEXT("smoke fail fixture writes"), WriteGeneratedToolWithPython(PyRoot, ToolId, Chunk4RaisePy));
+	ReloadUserRegistryForTests();
 	const uint64 Before = UnrealMcp::GetUserToolListVersion();
 	const UnrealMcp::TaskAtlasService::FSmokeResult Result = UnrealMcp::TaskAtlasService::SmokeMadeTool(FString(TEXT("user.")) + ToolId);
 	TestTrue(TEXT("smoke failed"), Result.Outcome == UnrealMcp::TaskAtlasService::ESmokeOutcome::Failed);
