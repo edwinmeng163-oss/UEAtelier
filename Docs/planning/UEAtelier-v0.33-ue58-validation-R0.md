@@ -404,7 +404,27 @@ gate-exclusion builds green; tool count stays 190.
   PUBLISHED draft against its own manifest — post-publish file edits, manifest
   loss/corruption → drift entries, never hard errors; proven by
   `UnrealMcp.OfficialCppToolset.DriftDetector`). **AgentSkill promotion —
-  REMAINING SLICE (specced)**: service `PromoteMadeToolToAgentSkill` calling the
+  DONE 2026-07-03 (`5526746`, PM solo)** — landed as specced with one design
+  correction: `UAgentSkillToolset` is MinimalAPI (statics not exported), so the
+  calls route through `UToolsetRegistry::ExecuteTool("ToolsetRegistry.AgentSkillToolset",
+  "CreateSkill"/"ListSkills", json)` — the registry executor is the linkable
+  seam. Skill class path recorded as `agentSkillPath` in tool.json; removal
+  deletes the Blueprint asset (AssetRegistry + ObjectTools) and clears the
+  field; audit events `toolset_skill_promoted`/`toolset_skill_removed`
+  best-effort. Proven by `UnrealMcp.OfficialToolset.AgentSkillPromotion`.
+  **Phase B toggle smoke CLOSED CLI-STYLE 2026-07-03 (live editor)**: engine
+  console commands `ModelContextProtocol.StartServer <port>`/`.StopServer`
+  (the exact module calls the Workbench button makes) driven over the live
+  `:8765` wire via `unreal.execute_console_command`: default-OFF confirmed →
+  start → `:8000` initialize serves → stop → MCP route removed
+  (`route_handler_not_found`; port stays bound by the engine's shared
+  FHttpServerModule — engine behavior). Plus
+  `UnrealMcp.OfficialServer.ToggleLifecycle` automation. LIVE-EDITOR CAVEAT:
+  `unreal.automation_list/run` see ZERO tests in an interactive session
+  (flags-mask quirk) — automation remains commandlet-driven. Official suites
+  13/13 green. TRACK COMPLETE; only Spike 3 (MCPClientToolset → `:8765`)
+  remains unrun, tracked as optional.
+  Original slice spec (implemented above): service `PromoteMadeToolToAgentSkill` calling the
   engine `ToolsetRegistry.AgentSkillToolset` create/update tool (observed live
   on `:8000`: "listing, reading, and creating/updating skills") with
   instruction-markdown built from the made-tool manifest, pointing at the
