@@ -64,7 +64,7 @@ references. UEAtelier's own `:8765` server remains the supported surface.
 UnrealMcp-v0.33.0-preview-mac-ue56-ue57-projectroot.zip
 SHA-256: 47734b988e4cd0c4b02769e0b7345a16d0e80c3a90af27fec1c0b2ed526f2858
 UnrealMcp-v0.33.0-preview-win-ue56-ue57-projectroot.zip
-SHA-256: <filled by Win CI / release process>
+SHA-256: 6c2c595fa90be67030fe1644372a70229694a0991b71a544eb07aba8cb466581
 ```
 
 ## 中文
