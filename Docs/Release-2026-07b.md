@@ -61,11 +61,16 @@ references. UEAtelier's own `:8765` server remains the supported surface.
 ### Assets
 
 ```text
-UnrealMcp-v0.33.0-preview-mac-ue56-ue57-projectroot.zip
+UnrealMcp-v0.33.0-preview-mac-ue56-ue57-ue58-projectroot.zip
 SHA-256: 47734b988e4cd0c4b02769e0b7345a16d0e80c3a90af27fec1c0b2ed526f2858
-UnrealMcp-v0.33.0-preview-win-ue56-ue57-projectroot.zip
+UnrealMcp-v0.33.0-preview-win-ue56-ue57-ue58-projectroot.zip
 SHA-256: 6c2c595fa90be67030fe1644372a70229694a0991b71a544eb07aba8cb466581
 ```
+
+Naming note: the package is a single source tree that builds on UE 5.6, 5.7,
+and 5.8. Official-MCP features compile and activate on UE 5.8 only; on
+5.6/5.7 the plugin behaves exactly like the baseline release.
+
 
 ## 中文
 
