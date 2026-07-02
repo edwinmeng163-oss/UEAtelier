@@ -50,7 +50,7 @@ SHA-256: 0433eece26423c191d21b5bf6ff8df69ca80abb7b74a2f8466a15915295fc70d
 SHA-256 sidecar: UnrealMcp-v0.34.0-mac-ue56-ue57-projectroot.zip.sha256
 
 UnrealMcp-v0.34.0-win-ue56-ue57-projectroot.zip
-SHA-256: <filled by Win CI / release process>
+SHA-256: 4c666d718c838719f547e1c6e40f0795a8835f864ea04d7e80312b8b8c61a853
 SHA-256 sidecar: UnrealMcp-v0.34.0-win-ue56-ue57-projectroot.zip.sha256
 ```
 
@@ -100,7 +100,7 @@ SHA-256: 0433eece26423c191d21b5bf6ff8df69ca80abb7b74a2f8466a15915295fc70d
 SHA-256 sidecar: UnrealMcp-v0.34.0-mac-ue56-ue57-projectroot.zip.sha256
 
 UnrealMcp-v0.34.0-win-ue56-ue57-projectroot.zip
-SHA-256: <Win CI / release process 填写>
+SHA-256: 4c666d718c838719f547e1c6e40f0795a8835f864ea04d7e80312b8b8c61a853
 SHA-256 sidecar: UnrealMcp-v0.34.0-win-ue56-ue57-projectroot.zip.sha256
 ```
 
@@ -150,6 +150,6 @@ SHA-256: 0433eece26423c191d21b5bf6ff8df69ca80abb7b74a2f8466a15915295fc70d
 SHA-256 sidecar: UnrealMcp-v0.34.0-mac-ue56-ue57-projectroot.zip.sha256
 
 UnrealMcp-v0.34.0-win-ue56-ue57-projectroot.zip
-SHA-256: <Win CI / release process が入力>
+SHA-256: 4c666d718c838719f547e1c6e40f0795a8835f864ea04d7e80312b8b8c61a853
 SHA-256 sidecar: UnrealMcp-v0.34.0-win-ue56-ue57-projectroot.zip.sha256
 ```
