@@ -568,11 +568,19 @@ namespace UnrealMcp::TaskAtlasService
 			return Tools;
 		}
 
-		bool TaskAtlasServiceIsDangerousStepTool(const FString& ToolName)
+		bool TaskAtlasServiceDescribeDangerousStepTool(const FString& ToolName, FVetImpactTool& OutTool)
 		{
 			FCallToolTargetFacts Facts = TaskAtlasServiceMakePolicyFacts(ToolName);
 			const FCallToolPolicyResult PolicyResult = ClassifyCallToolTarget_Pure(Facts);
-			return PolicyResult.Decision != ECallToolDecision::Allow;
+			if (PolicyResult.Decision == ECallToolDecision::Allow)
+			{
+				return false;
+			}
+
+			OutTool.ToolName = ToolName.TrimStartAndEnd();
+			OutTool.PolicyDecision = TaskAtlasServiceDecisionToString(PolicyResult.Decision);
+			OutTool.PolicyReason = PolicyResult.Reason;
+			return true;
 		}
 
 		void TaskAtlasServicePopulateVettedFieldsFromJson(
@@ -2672,9 +2680,10 @@ namespace UnrealMcp::TaskAtlasService
 
 		for (const FString& StepTool : TaskAtlasServiceReadStepToolNames(Tool.ToolJson))
 		{
-			if (TaskAtlasServiceIsDangerousStepTool(StepTool))
+			FVetImpactTool ImpactTool;
+			if (TaskAtlasServiceDescribeDangerousStepTool(StepTool, ImpactTool))
 			{
-				Result.DangerousTools.Add(StepTool);
+				Result.DangerousTools.Add(ImpactTool);
 			}
 		}
 		Result.bResolved = true;

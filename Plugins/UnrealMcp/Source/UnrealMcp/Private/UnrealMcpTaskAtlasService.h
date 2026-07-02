@@ -230,13 +230,20 @@ namespace UnrealMcp::TaskAtlasService
 		FString FailureDetail;
 	};
 
+	struct FVetImpactTool
+	{
+		FString ToolName;
+		FString PolicyDecision;
+		FString PolicyReason;
+	};
+
 	struct FVetImpactDescription
 	{
 		bool bResolved = false;
 		FString FailureStage;
 		FString FailureDetail;
 		FString MainPySha256;
-		TArray<FString> DangerousTools;
+		TArray<FVetImpactTool> DangerousTools;
 	};
 
 	struct FUserToolView

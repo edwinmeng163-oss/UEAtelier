@@ -1378,9 +1378,13 @@ bool STaskAtlasWindow::ShowApproveRealWritesDialog(
 	}
 	else
 	{
-		for (const FString& Tool : Impact.DangerousTools)
+		for (const UnrealMcp::TaskAtlasService::FVetImpactTool& Tool : Impact.DangerousTools)
 		{
-			DangerousText += FString::Printf(TEXT("- %s\n"), *Tool);
+			DangerousText += FString::Printf(
+				TEXT("- %s \u2014 %s (%s)\n"),
+				*Tool.ToolName,
+				*Tool.PolicyDecision,
+				*Tool.PolicyReason);
 		}
 		DangerousText.RemoveFromEnd(TEXT("\n"));
 	}

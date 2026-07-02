@@ -195,6 +195,17 @@ bool FUnrealMcpVetMadeToolHappyPathTest::RunTest(const FString& Parameters)
 
 	TestTrue(TEXT("fixture writes"), WriteTool(TEXT("happy"), PassPy));
 	Reload();
+	const UnrealMcp::TaskAtlasService::FVetImpactDescription Impact =
+		UnrealMcp::TaskAtlasService::DescribeVetImpact(ToolName(Prefix + TEXT("happy")));
+	TestTrue(TEXT("impact resolves"), Impact.bResolved);
+	TestEqual(TEXT("impact dangerous step count"), Impact.DangerousTools.Num(), 1);
+	if (Impact.DangerousTools.Num() == 1)
+	{
+		const UnrealMcp::TaskAtlasService::FVetImpactTool& DangerousTool = Impact.DangerousTools[0];
+		TestEqual(TEXT("impact dangerous tool"), DangerousTool.ToolName, TEXT("unreal.code_apply_change"));
+		TestEqual(TEXT("impact policy decision"), DangerousTool.PolicyDecision, TEXT("force_dry_run"));
+		TestEqual(TEXT("impact policy reason"), DangerousTool.PolicyReason, TEXT("force_dry_run"));
+	}
 	const UnrealMcp::TaskAtlasService::FVetMadeToolResult Result = Vet(TEXT("happy"));
 	if (IsPythonUnavailable(Result))
 	{
