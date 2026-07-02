@@ -379,15 +379,41 @@ gate-exclusion builds green; tool count stays 190.
   `registrationStatus.state:"requires_build_restart"`; `ValidateOfficialCppToolsetFiles`
   pins the deterministic file set, delegation-only source shape, and manifest/hash
   consistency. Proven by pure Automation tests under `UnrealMcp.OfficialCppToolset.*`.
-- Chunk C3 wave 2 — IN PROGRESS: additive `officialVariant:"python"|"cpp"` wiring on
+- Chunk C3 wave 2 (`6e5ef4e`) — DONE: additive `officialVariant:"python"|"cpp"` wiring on
   `task_atlas_make_composite` (default Python, tool count still 190), a compat-gated
   Task Atlas UI selector, and an explicit `Build draft (UE5.8)` action for generated
   C++ drafts. The build action gates on open `UnrealEditor`, temporarily mounts the
   draft under `Examples/UEvolveExample58/Plugins/`, runs UBT only by explicit user
   action, writes `buildStatus`, keeps `registrationStatus.state:"requires_build_restart"`,
   and removes the temp mount on every post-copy path.
-- Chunk C4 — AgentSkill promotion (instruction-only) + manifest `schemaHash` drift
-  detector + docs/freshness sweep.
+- **C3 LIVE POST-RESTART PROOF (PM-run, 2026-07-03) — PASS**: spike
+  `UToolsetDefinition` plugin mounted + UBT-built into the 5.8 host; editor
+  restarted with `-ModelContextProtocolStartServer -ModelContextProtocolPort=8000`;
+  `LogToolsetRegistry: Registering Toolset UEAtelierC3SpikeToolset.…` observed.
+  Official `:8000/mcp` is a STATEFUL streamable-HTTP MCP server: `initialize`
+  returns `Mcp-Session-Id` which every subsequent call must carry; surface is the
+  meta-tools `list_toolsets` / `describe_toolset` / `call_tool`; `call_tool`
+  takes `toolset_name` + SHORT `tool_name` (fully-qualified names are rejected).
+  The spike AICallable delegated through `UUnrealMcpCallToolLibrary::CallTool`
+  and returned the real `unreal.editor_status` payload over `:8000`, with a
+  `tool_call` ActivityLog audit row; `:8765` served in the same session
+  (coexistence); clean teardown (mount removed, both ports released). The
+  Automation-excluded build-success path is thereby proven end-to-end.
+- Chunk C4 — SPLIT (2026-07-03): **schemaHash drift detector DONE** (`45ad508`:
+  `DetectOfficialCppToolsetDraftDrift` in the emitter unit re-verifies a
+  PUBLISHED draft against its own manifest — post-publish file edits, manifest
+  loss/corruption → drift entries, never hard errors; proven by
+  `UnrealMcp.OfficialCppToolset.DriftDetector`). **AgentSkill promotion —
+  REMAINING SLICE (specced)**: service `PromoteMadeToolToAgentSkill` calling the
+  engine `ToolsetRegistry.AgentSkillToolset` create/update tool (observed live
+  on `:8000`: "listing, reading, and creating/updating skills") with
+  instruction-markdown built from the made-tool manifest, pointing at the
+  generated callable toolset; manifest records the skill handle; revoke/delete
+  paths must remove the skill asset; instruction-only. Docs/freshness sweep at
+  slice end.
+- Remaining human-gated item: the Phase B Workbench toggle GUI smoke (the
+  toggle's underlying server start/stop is exercised — the click path itself
+  needs a GUI session). Spike 3 (MCPClientToolset → `:8765`) remains not run.
 
 **Deferred / tracked:** protocol bump `:8765` → `2025-11-25` (decision #8 follow-up);
 the GUI Workbench smoke of the chunk-2 toggle.
