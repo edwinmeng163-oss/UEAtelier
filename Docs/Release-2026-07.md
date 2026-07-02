@@ -46,7 +46,7 @@ Vetting is opt-in per made tool. Until an in-editor user approves a specific gen
 
 ```text
 UnrealMcp-v0.34.0-mac-ue56-ue57-projectroot.zip
-SHA-256: <filled during release process>
+SHA-256: 0433eece26423c191d21b5bf6ff8df69ca80abb7b74a2f8466a15915295fc70d
 SHA-256 sidecar: UnrealMcp-v0.34.0-mac-ue56-ue57-projectroot.zip.sha256
 
 UnrealMcp-v0.34.0-win-ue56-ue57-projectroot.zip
@@ -96,7 +96,7 @@ Vetting 对每个 made tool 单独 opt-in。在编辑器内用户批准某个生
 
 ```text
 UnrealMcp-v0.34.0-mac-ue56-ue57-projectroot.zip
-SHA-256: <release process 填写>
+SHA-256: 0433eece26423c191d21b5bf6ff8df69ca80abb7b74a2f8466a15915295fc70d
 SHA-256 sidecar: UnrealMcp-v0.34.0-mac-ue56-ue57-projectroot.zip.sha256
 
 UnrealMcp-v0.34.0-win-ue56-ue57-projectroot.zip
@@ -146,7 +146,7 @@ Vetting は made tool ごとの opt-in です。エディタ内ユーザーが�
 
 ```text
 UnrealMcp-v0.34.0-mac-ue56-ue57-projectroot.zip
-SHA-256: <release process が入力>
+SHA-256: 0433eece26423c191d21b5bf6ff8df69ca80abb7b74a2f8466a15915295fc70d
 SHA-256 sidecar: UnrealMcp-v0.34.0-mac-ue56-ue57-projectroot.zip.sha256
 
 UnrealMcp-v0.34.0-win-ue56-ue57-projectroot.zip
