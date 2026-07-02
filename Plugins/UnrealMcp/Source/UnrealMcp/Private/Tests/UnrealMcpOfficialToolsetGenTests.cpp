@@ -35,6 +35,8 @@ namespace UnrealMcpOfficialToolsetGenTests
 	const FString TaskId = TEXT("official-toolset-gen-test");
 	const FString WiredTaskId = TEXT("official-toolset-wired-test");
 	const FString WiredLabel = TEXT("Official Wired Toolset Gen");
+	const FString CppWiredTaskId = TEXT("official-cpp-toolset-wired-test");
+	const FString CppWiredLabel = TEXT("Official Cpp Wired Toolset Gen");
 
 	FString DraftDir()
 	{
@@ -73,6 +75,16 @@ namespace UnrealMcpOfficialToolsetGenTests
 	FString WiredDraftDir()
 	{
 		return FPaths::Combine(UnrealMcp::TaskAtlasService::OfficialToolsetDraftsRootDir(), WiredToolId());
+	}
+
+	FString CppWiredToolId()
+	{
+		return UnrealMcp::TaskAtlasService::MakeAtlasToolId(CppWiredLabel, CppWiredTaskId);
+	}
+
+	FString CppWiredDraftDir()
+	{
+		return FPaths::Combine(UnrealMcp::TaskAtlasService::OfficialToolsetDraftsRootDir(), CppWiredToolId());
 	}
 
 	bool ParseJsonObject(const FString& Json, TSharedPtr<FJsonObject>& OutObject)
@@ -140,11 +152,11 @@ namespace UnrealMcpOfficialToolsetGenTests
 		return MakeShared<FJsonValueObject>(StepRef);
 	}
 
-	bool WriteWiredTaskFixture(const FString& CaptureRef)
+	bool WriteTaskFixture(const FString& InTaskId, const FString& InLabel, const FString& CaptureRef)
 	{
 		TSharedPtr<FJsonObject> Task = MakeObject();
-		Task->SetStringField(TEXT("taskId"), WiredTaskId);
-		Task->SetStringField(TEXT("label"), WiredLabel);
+		Task->SetStringField(TEXT("taskId"), InTaskId);
+		Task->SetStringField(TEXT("label"), InLabel);
 		Task->SetStringField(TEXT("rating"), TEXT("unrated"));
 		Task->SetBoolField(TEXT("pinned"), false);
 		Task->SetStringField(TEXT("tStartUtc"), TEXT("2026-06-30T00:00:00Z"));
@@ -162,9 +174,14 @@ namespace UnrealMcpOfficialToolsetGenTests
 		StepRefs.Add(MakeStepRef(CaptureRef));
 		Task->SetArrayField(TEXT("stepRefs"), StepRefs);
 
-		const FString TaskPath = ProjectTaskPath(WiredTaskId);
+		const FString TaskPath = ProjectTaskPath(InTaskId);
 		IFileManager::Get().MakeDirectory(*FPaths::GetPath(TaskPath), true);
 		return FFileHelper::SaveStringToFile(JsonToString(Task), *TaskPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+	}
+
+	bool WriteWiredTaskFixture(const FString& CaptureRef)
+	{
+		return WriteTaskFixture(WiredTaskId, WiredLabel, CaptureRef);
 	}
 
 	TSet<FString> VisibleCoreToolsForFixture()
@@ -783,6 +800,8 @@ bool FUnrealMcpOfficialToolsetMakeCompositeWiredTest::RunTest(const FString& Par
 	(*OfficialDraft)->TryGetBoolField(TEXT("succeeded"), bSucceeded);
 	TestTrue(TEXT("official draft supported"), bSupported);
 	TestTrue(TEXT("official draft succeeded"), bSucceeded);
+	TestFalse(TEXT("omitted variant keeps python shape without variant field"), (*OfficialDraft)->HasField(TEXT("variant")));
+	TestFalse(TEXT("omitted variant keeps python shape without kind field"), (*OfficialDraft)->HasField(TEXT("kind")));
 	if (!bSucceeded)
 	{
 		FString ErrorMessage;
@@ -828,6 +847,138 @@ bool FUnrealMcpOfficialToolsetMakeCompositeWiredTest::RunTest(const FString& Par
 	TestFalse(TEXT("wired draft directory deleted"), IFileManager::Get().DirectoryExists(*OfficialGeneratedDir));
 	TestFalse(TEXT("wired toolset unregistered"), UToolsetRegistry::IsToolsetRegistered(OfficialToolsetName));
 	OfficialGeneratedDir.Reset();
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FUnrealMcpOfficialCppToolsetMakeCompositeVariantCppTest,
+	"UnrealMcp.OfficialCppToolset.MakeCompositeVariantCpp",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FUnrealMcpOfficialCppToolsetMakeCompositeVariantCppTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace UnrealMcpOfficialToolsetGenTests;
+
+	const FString CaptureSessionId = MakeCaptureSessionId();
+	const FString Root = FPaths::Combine(WiredTestRoot(), TEXT("Cpp"));
+	const FString PyToolsRoot = FPaths::Combine(Root, TEXT("Tools/UnrealMcpPyTools"));
+	FString OfficialGeneratedDir;
+	ON_SCOPE_EXIT
+	{
+		UnrealMcp::TaskAtlasService::ClearMadeToolsRootDirForTests();
+		IFileManager::Get().Delete(*ProjectTaskPath(CppWiredTaskId), false, true, true);
+		IFileManager::Get().DeleteDirectory(*Root, false, true);
+		IFileManager::Get().DeleteDirectory(*CppWiredDraftDir(), false, true);
+		DeleteCaptureSession(CaptureSessionId);
+	};
+
+	IFileManager::Get().DeleteDirectory(*Root, false, true);
+	IFileManager::Get().DeleteDirectory(*CppWiredDraftDir(), false, true);
+	IFileManager::Get().MakeDirectory(*PyToolsRoot, true);
+	UnrealMcp::TaskAtlasService::SetMadeToolsRootDirForTests(PyToolsRoot);
+
+	FString CaptureRef;
+	TestTrue(TEXT("write cpp wired captured args"), WriteCapturedArgsFixture(CaptureSessionId, TEXT("official-cpp-wired-probe"), CaptureRef));
+	if (CaptureRef.IsEmpty())
+	{
+		return false;
+	}
+	TestTrue(TEXT("write cpp wired Task Atlas task"), WriteTaskFixture(CppWiredTaskId, CppWiredLabel, CaptureRef));
+
+	TSharedPtr<FJsonObject> Args = MakeObject();
+	Args->SetStringField(TEXT("taskId"), CppWiredTaskId);
+	Args->SetBoolField(TEXT("emitOfficial"), true);
+	Args->SetStringField(TEXT("officialVariant"), TEXT("cpp"));
+	const FUnrealMcpExecutionResult Result = ExecuteMcpTool(TEXT("unreal.task_atlas_make_composite"), Args);
+	TestFalse(TEXT("cpp variant make_composite is not bIsError"), Result.bIsError);
+	TestTrue(TEXT("cpp variant structured content"), Result.StructuredContent.IsValid());
+	if (!Result.StructuredContent.IsValid())
+	{
+		return false;
+	}
+
+	FString Outcome;
+	Result.StructuredContent->TryGetStringField(TEXT("outcome"), Outcome);
+	TestEqual(TEXT("cpp variant composite outcome"), Outcome, TEXT("CompositeWritten"));
+	FString GeneratedDir;
+	Result.StructuredContent->TryGetStringField(TEXT("generatedDir"), GeneratedDir);
+	TestFalse(TEXT("cpp variant composite generated dir non-empty"), GeneratedDir.IsEmpty());
+	TestTrue(TEXT("cpp variant composite generated dir exists"), IFileManager::Get().DirectoryExists(*GeneratedDir));
+
+	const TSharedPtr<FJsonObject>* OfficialDraft = nullptr;
+	TestTrue(
+		TEXT("cpp officialDraft object present"),
+		Result.StructuredContent->TryGetObjectField(TEXT("officialDraft"), OfficialDraft) && OfficialDraft && (*OfficialDraft).IsValid());
+	if (!OfficialDraft || !(*OfficialDraft).IsValid())
+	{
+		return false;
+	}
+
+	bool bSupported = false;
+	bool bSucceeded = false;
+	bool bBuildRequired = false;
+	bool bRestartRequired = false;
+	FString Variant;
+	FString Kind;
+	(*OfficialDraft)->TryGetBoolField(TEXT("supported"), bSupported);
+	(*OfficialDraft)->TryGetBoolField(TEXT("succeeded"), bSucceeded);
+	(*OfficialDraft)->TryGetBoolField(TEXT("buildRequired"), bBuildRequired);
+	(*OfficialDraft)->TryGetBoolField(TEXT("restartRequired"), bRestartRequired);
+	(*OfficialDraft)->TryGetStringField(TEXT("variant"), Variant);
+	(*OfficialDraft)->TryGetStringField(TEXT("kind"), Kind);
+	TestTrue(TEXT("cpp official draft supported"), bSupported);
+	TestTrue(TEXT("cpp official draft succeeded"), bSucceeded);
+	TestEqual(TEXT("officialDraft variant cpp"), Variant, TEXT("cpp"));
+	TestEqual(TEXT("officialDraft kind cpp"), Kind, TEXT("cpp"));
+	TestTrue(TEXT("cpp build required"), bBuildRequired);
+	TestTrue(TEXT("cpp restart required"), bRestartRequired);
+	if (!bSucceeded)
+	{
+		FString ErrorMessage;
+		(*OfficialDraft)->TryGetStringField(TEXT("errorMessage"), ErrorMessage);
+		AddError(ErrorMessage);
+		return false;
+	}
+
+	FString PluginDescriptorPath;
+	FString OfficialManifestPath;
+	(*OfficialDraft)->TryGetStringField(TEXT("generatedDir"), OfficialGeneratedDir);
+	(*OfficialDraft)->TryGetStringField(TEXT("pluginDescriptorPath"), PluginDescriptorPath);
+	(*OfficialDraft)->TryGetStringField(TEXT("manifestPath"), OfficialManifestPath);
+	TestTrue(TEXT("cpp official generated dir exists"), IFileManager::Get().DirectoryExists(*OfficialGeneratedDir));
+	TestTrue(TEXT("cpp plugin descriptor exists"), FPaths::FileExists(PluginDescriptorPath));
+	TestTrue(TEXT("cpp manifest exists"), FPaths::FileExists(OfficialManifestPath));
+
+	const TSharedPtr<FJsonObject>* RegistrationStatus = nullptr;
+	TestTrue(
+		TEXT("cpp officialDraft registrationStatus object"),
+		(*OfficialDraft)->TryGetObjectField(TEXT("registrationStatus"), RegistrationStatus)
+			&& RegistrationStatus
+			&& (*RegistrationStatus).IsValid());
+	if (RegistrationStatus && (*RegistrationStatus).IsValid())
+	{
+		FString State;
+		(*RegistrationStatus)->TryGetStringField(TEXT("state"), State);
+		TestEqual(TEXT("cpp officialDraft registration state"), State, TEXT("requires_build_restart"));
+	}
+
+	TSharedPtr<FJsonObject> Manifest;
+	FString ManifestJson;
+	TestTrue(TEXT("load cpp manifest"), FFileHelper::LoadFileToString(ManifestJson, *OfficialManifestPath));
+	TestTrue(TEXT("parse cpp manifest"), ParseJsonObject(ManifestJson, Manifest));
+	if (Manifest.IsValid())
+	{
+		FString ManifestVariant;
+		bool bManifestBuildRequired = false;
+		bool bManifestRestartRequired = false;
+		Manifest->TryGetStringField(TEXT("variant"), ManifestVariant);
+		Manifest->TryGetBoolField(TEXT("buildRequired"), bManifestBuildRequired);
+		Manifest->TryGetBoolField(TEXT("restartRequired"), bManifestRestartRequired);
+		TestEqual(TEXT("manifest variant cpp"), ManifestVariant, TEXT("cpp"));
+		TestTrue(TEXT("manifest build required"), bManifestBuildRequired);
+		TestTrue(TEXT("manifest restart required"), bManifestRestartRequired);
+	}
 	return true;
 }
 

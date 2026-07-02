@@ -68,6 +68,7 @@ private:
 	FReply HandleToolClicked(FString ToolName);
 	FReply HandleDeleteMadeToolClicked(FString ToolName);
 	FReply HandleTestNowClicked(FString ToolName);
+	FReply HandleBuildOfficialCppDraftClicked(FString ToolId);
 	FReply HandleDebugClicked();
 
 	void RefreshData();

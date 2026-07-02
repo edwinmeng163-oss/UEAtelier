@@ -3,6 +3,7 @@
 #include "UnrealMcpCapturedArgsStore.h"
 #include "UnrealMcpModule.h"
 #include "UnrealMcpHashUtils.h"
+#include "UnrealMcpOfficialCppToolsetEmitter.h"
 #include "UnrealMcpToolRegistry.h"
 #include "UnrealMcpUserToolRegistry.h"
 
@@ -1156,7 +1157,15 @@ namespace UnrealMcp::TaskAtlasComposite
 namespace TaskAtlasWindow
 {
 #if UNREALMCP_HAS_OFFICIAL_TOOLSETS
+	enum class EOfficialDraftVariant : uint8
+	{
+		Python,
+		Cpp
+	};
+
 	bool bEmitOfficialToolsetDraft = false;
+	EOfficialDraftVariant OfficialDraftVariant = EOfficialDraftVariant::Python;
+	FString LastOfficialCppDraftToolId;
 #endif
 
 	FString JsonObjectToPrettyString(const TSharedPtr<FJsonObject>& Object)
@@ -1369,6 +1378,51 @@ namespace TaskAtlasWindow
 			return FString::Printf(TEXT("; official draft failed: %s. See %s"), *Result.ErrorMessage, *Result.FailureDiagnosticPath);
 		}
 		return FString::Printf(TEXT("; official draft failed: %s"), *Result.ErrorMessage);
+	}
+
+	UnrealMcp::TaskAtlasOfficialCpp::FOfficialCppToolsetDraftRequest MakeOfficialCppDraftRequest(const UnrealMcp::TaskAtlasService::FOfficialToolsetDraftRequest& Request)
+	{
+		UnrealMcp::TaskAtlasOfficialCpp::FOfficialCppToolsetDraftRequest CppRequest;
+		CppRequest.ToolId = Request.ToolId;
+		CppRequest.Title = Request.Title;
+		CppRequest.Description = Request.Description;
+		CppRequest.TaskId = Request.TaskId;
+		CppRequest.ReplayEligibility = Request.ReplayEligibility;
+		CppRequest.ReplayUnavailableReason = Request.ReplayUnavailableReason;
+		CppRequest.CriticalPath = Request.CriticalPath;
+		CppRequest.StepRefs = Request.StepRefs;
+		CppRequest.VisibleCoreToolNames = Request.VisibleCoreToolNames;
+		return CppRequest;
+	}
+
+	FString OfficialCppDraftStatusText(const UnrealMcp::TaskAtlasOfficialCpp::FOfficialCppToolsetDraftResult& Result)
+	{
+		if (Result.bSucceeded)
+		{
+			return FString::Printf(TEXT("; official C++ draft %s generated at %s"), *Result.ToolsetName, *Result.GeneratedDir);
+		}
+		if (!Result.FailureDiagnosticPath.IsEmpty())
+		{
+			return FString::Printf(TEXT("; official C++ draft failed: %s. See %s"), *Result.ErrorMessage, *Result.FailureDiagnosticPath);
+		}
+		return FString::Printf(TEXT("; official C++ draft failed: %s"), *Result.ErrorMessage);
+	}
+
+	FString OfficialCppBuildStatusText(const UnrealMcp::TaskAtlasService::FOfficialCppToolsetBuildDraftResult& Result)
+	{
+		if (Result.BuildStatus == TEXT("buildBlockedByOpenEditor"))
+		{
+			return FString::Printf(TEXT("Build blocked: %s %s"), *Result.ErrorMessage, *Result.Instructions);
+		}
+		if (Result.bSucceeded)
+		{
+			return FString::Printf(TEXT("Official C++ draft build succeeded. Log: %s"), *Result.BuildLogPath);
+		}
+		if (!Result.BuildLogPath.IsEmpty())
+		{
+			return FString::Printf(TEXT("Official C++ draft build failed: %s. Log: %s"), *Result.ErrorMessage, *Result.BuildLogPath);
+		}
+		return FString::Printf(TEXT("Official C++ draft build failed: %s"), *Result.ErrorMessage);
 	}
 #endif
 
@@ -1815,9 +1869,23 @@ FReply STaskAtlasWindow::HandleMakeToolClicked(FWorkflowRow Row)
 			FString FailureReason;
 			if (TaskAtlasWindow::TryBuildOfficialDraftRequest(Row, Result, OfficialRequest, FailureReason))
 			{
-				const UnrealMcp::TaskAtlasService::FOfficialToolsetDraftResult OfficialResult =
-					UnrealMcp::TaskAtlasService::GenerateOfficialToolsetDraft(OfficialRequest);
-				Status += TaskAtlasWindow::OfficialDraftStatusText(OfficialResult);
+				if (TaskAtlasWindow::OfficialDraftVariant == TaskAtlasWindow::EOfficialDraftVariant::Cpp)
+				{
+					TaskAtlasWindow::LastOfficialCppDraftToolId.Reset();
+					const UnrealMcp::TaskAtlasOfficialCpp::FOfficialCppToolsetDraftResult OfficialResult =
+						UnrealMcp::TaskAtlasOfficialCpp::GenerateOfficialCppToolsetDraft(TaskAtlasWindow::MakeOfficialCppDraftRequest(OfficialRequest));
+					if (OfficialResult.bSucceeded)
+					{
+						TaskAtlasWindow::LastOfficialCppDraftToolId = OfficialRequest.ToolId;
+					}
+					Status += TaskAtlasWindow::OfficialCppDraftStatusText(OfficialResult);
+				}
+				else
+				{
+					const UnrealMcp::TaskAtlasService::FOfficialToolsetDraftResult OfficialResult =
+						UnrealMcp::TaskAtlasService::GenerateOfficialToolsetDraft(OfficialRequest);
+					Status += TaskAtlasWindow::OfficialDraftStatusText(OfficialResult);
+				}
 			}
 			else
 			{
@@ -2019,6 +2087,22 @@ FReply STaskAtlasWindow::HandleTestNowClicked(FString ToolName)
 
 	RefreshMadeTools();
 	RebuildLists();
+	return FReply::Handled();
+}
+
+FReply STaskAtlasWindow::HandleBuildOfficialCppDraftClicked(FString ToolId)
+{
+#if UNREALMCP_HAS_OFFICIAL_TOOLSETS
+	if (!OwnerModule)
+	{
+		SetStatus(TEXT("Task Atlas is not connected to the module."));
+		return FReply::Handled();
+	}
+
+	const UnrealMcp::TaskAtlasService::FOfficialCppToolsetBuildDraftResult Result =
+		UnrealMcp::TaskAtlasService::BuildOfficialCppToolsetDraft(ToolId);
+	SetStatus(TaskAtlasWindow::OfficialCppBuildStatusText(Result));
+#endif
 	return FReply::Handled();
 }
 
@@ -2237,6 +2321,9 @@ TSharedRef<SWidget> STaskAtlasWindow::BuildWorkflowRow(const FWorkflowRow& Row)
 	const FString PinPrefix = Row.bPinned ? TEXT("[PINNED] ") : FString();
 	const FString ReplayStatus = UnrealMcp::TaskAtlasComposite::ReplayStatusForReplayEligibility(Row.ReplayEligibility);
 	const FString CriticalPathText = TaskAtlasWindow::JoinCriticalPath(Row.CriticalPath);
+#if UNREALMCP_HAS_OFFICIAL_TOOLSETS
+	const FString OfficialToolId = UnrealMcp::TaskAtlasService::MakeAtlasToolId(Row.Label.TrimStartAndEnd(), Row.TaskId);
+#endif
 	TSharedRef<SWrapBox> CriticalPathWrap = SNew(SWrapBox)
 		.UseAllottedSize(true)
 		.InnerSlotPadding(FVector2D(4.0f, 4.0f));
@@ -2334,6 +2421,63 @@ TSharedRef<SWidget> STaskAtlasWindow::BuildWorkflowRow(const FWorkflowRow& Row)
 						SNew(STextBlock)
 						.Text(LOCTEXT("EmitOfficialToolset", "Also generate official toolset (UE5.8)"))
 					]
+				]
+				+ SWrapBox::Slot()
+				[
+					SNew(SCheckBox)
+					.Style(FAppStyle::Get(), "RadioButton")
+					.IsChecked_Lambda([]()
+					{
+						return TaskAtlasWindow::OfficialDraftVariant == TaskAtlasWindow::EOfficialDraftVariant::Python ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+					})
+					.IsEnabled_Lambda([Row]()
+					{
+						return TaskAtlasWindow::bEmitOfficialToolsetDraft && Row.Eligibility != UnrealMcp::TaskAtlasService::EEligibility::Blocked;
+					})
+					.OnCheckStateChanged_Lambda([](ECheckBoxState NewState)
+					{
+						if (NewState == ECheckBoxState::Checked)
+						{
+							TaskAtlasWindow::OfficialDraftVariant = TaskAtlasWindow::EOfficialDraftVariant::Python;
+						}
+					})
+					[
+						SNew(STextBlock)
+						.Text(LOCTEXT("OfficialVariantPython", "Python"))
+					]
+				]
+				+ SWrapBox::Slot()
+				[
+					SNew(SCheckBox)
+					.Style(FAppStyle::Get(), "RadioButton")
+					.IsChecked_Lambda([]()
+					{
+						return TaskAtlasWindow::OfficialDraftVariant == TaskAtlasWindow::EOfficialDraftVariant::Cpp ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+					})
+					.IsEnabled_Lambda([Row]()
+					{
+						return TaskAtlasWindow::bEmitOfficialToolsetDraft && Row.Eligibility != UnrealMcp::TaskAtlasService::EEligibility::Blocked;
+					})
+					.ToolTipText(LOCTEXT("OfficialVariantCppTooltip", "Generate a build-required C++ ToolsetRegistry draft for UE5.8."))
+					.OnCheckStateChanged_Lambda([](ECheckBoxState NewState)
+					{
+						if (NewState == ECheckBoxState::Checked)
+						{
+							TaskAtlasWindow::OfficialDraftVariant = TaskAtlasWindow::EOfficialDraftVariant::Cpp;
+						}
+					})
+					[
+						SNew(STextBlock)
+						.Text(LOCTEXT("OfficialVariantCpp", "C++"))
+					]
+				]
+				+ SWrapBox::Slot()
+				[
+					SNew(SButton)
+					.Text(LOCTEXT("BuildOfficialCppDraft", "Build draft (UE5.8)"))
+					.Visibility(TaskAtlasWindow::LastOfficialCppDraftToolId == OfficialToolId ? EVisibility::Visible : EVisibility::Collapsed)
+					.ToolTipText(LOCTEXT("BuildOfficialCppDraftTooltip", "Explicitly build the generated C++ official draft. This blocks while any UnrealEditor process is open and never closes the editor."))
+					.OnClicked(this, &STaskAtlasWindow::HandleBuildOfficialCppDraftClicked, OfficialToolId)
 				]
 #endif
 				+ SWrapBox::Slot()

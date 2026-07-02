@@ -278,6 +278,31 @@ namespace UnrealMcp::TaskAtlasService
 		FString ErrorMessage;
 		FString UpdatedManifestJson;
 	};
+
+	struct FOfficialCppToolsetBuildDraftResult
+	{
+		bool bSucceeded = false;
+		FString BuildStatus;                  // succeeded | failed | buildBlockedByOpenEditor
+		FString ErrorCode;
+		FString ErrorMessage;
+		FString Instructions;
+		FString ToolId;
+		FString PluginName;
+		FString DraftDir;
+		FString PluginSourceDir;
+		FString MountedPluginDir;
+		FString ProjectFilePath;
+		FString BuildScriptPath;
+		FString BuildLogPath;
+		FString ManifestPath;
+		FString ManifestJson;
+		int32 ReturnCode = -1;
+		double ElapsedSeconds = 0.0;
+		bool bRestartRequired = true;
+		bool bMountedCopyRemoved = false;
+		bool bCleanupFailed = false;
+		FString CleanupErrorMessage;
+	};
 #endif
 
 	struct FUserToolView
@@ -303,11 +328,21 @@ namespace UnrealMcp::TaskAtlasService
 #if WITH_DEV_AUTOMATION_TESTS
 	void SetMadeToolsRootDirForTests(const FString& RootDir);
 	void ClearMadeToolsRootDirForTests();
+	void SetSavedRootDirForTests(const FString& RootDir);
+	void ClearSavedRootDirForTests();
 #endif
 #if UNREALMCP_HAS_OFFICIAL_TOOLSETS
 	FString OfficialToolsetDraftsRootDir();
 	FOfficialToolsetDraftResult GenerateOfficialToolsetDraft(const FOfficialToolsetDraftRequest& Req);
 	FOfficialToolsetRollbackResult RollbackOfficialToolsetDraft(const FString& ToolsetName, const FString& ModuleName, const FString& GeneratedDir);
+	FOfficialCppToolsetBuildDraftResult BuildOfficialCppToolsetDraft(const FString& ToolId);
+#if WITH_DEV_AUTOMATION_TESTS
+	void SetOfficialCppBuildEditorRunningForTests(bool bIsRunning);
+	void ClearOfficialCppBuildEditorRunningForTests();
+	void SetOfficialCppBuildExampleRootForTests(const FString& ExampleRootDir);
+	void ClearOfficialCppBuildExampleRootForTests();
+	void FailNextOfficialCppBuildAfterCopyForTests();
+#endif
 #endif
 	FPromoteToRagResult PromoteToRag(const FPromoteToRagRequest& Req);
 	FPromoteToRagResult PromoteToRag(const FString& TaskId);

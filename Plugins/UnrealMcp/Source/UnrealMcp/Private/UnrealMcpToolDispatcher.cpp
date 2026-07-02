@@ -19,6 +19,7 @@
 #include "UnrealMcpEngineCompat.h"
 #include "UnrealMcpMaterialInstanceTools.h"
 #include "UnrealMcpMemoryTools.h"
+#include "UnrealMcpOfficialCppToolsetEmitter.h"
 #include "UnrealMcpPieSmokeTools.h"
 #include "UnrealMcpScaffoldTools.h"
 #include "UnrealMcpSelfExtensionTools.h"
@@ -203,6 +204,102 @@ namespace UnrealMcp
 				}
 			}
 			return Object;
+		}
+
+		TArray<FString> GetOfficialCppToolNamesFromManifest(const FString& ManifestJson)
+		{
+			TArray<FString> ToolNames;
+			TSharedPtr<FJsonObject> Manifest;
+			if (ManifestJson.IsEmpty())
+			{
+				return ToolNames;
+			}
+			const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ManifestJson);
+			if (!FJsonSerializer::Deserialize(Reader, Manifest) || !Manifest.IsValid())
+			{
+				return ToolNames;
+			}
+			const TArray<TSharedPtr<FJsonValue>>* ToolValues = nullptr;
+			if (!Manifest->TryGetArrayField(TEXT("toolNames"), ToolValues) || !ToolValues)
+			{
+				return ToolNames;
+			}
+			for (const TSharedPtr<FJsonValue>& ToolValue : *ToolValues)
+			{
+				const TSharedPtr<FJsonObject> ToolObject = ToolValue.IsValid() && ToolValue->Type == EJson::Object ? ToolValue->AsObject() : nullptr;
+				FString ToolName;
+				if (ToolObject.IsValid() && ToolObject->TryGetStringField(TEXT("name"), ToolName) && !ToolName.TrimStartAndEnd().IsEmpty())
+				{
+					ToolNames.Add(ToolName.TrimStartAndEnd());
+				}
+			}
+			return ToolNames;
+		}
+
+		TSharedPtr<FJsonObject> MakeOfficialCppDraftFailureContent(const FString& ErrorCode, const FString& ErrorMessage)
+		{
+			TSharedPtr<FJsonObject> Object = MakeOfficialDraftFailureContent(ErrorCode, ErrorMessage);
+			Object->SetStringField(TEXT("variant"), TEXT("cpp"));
+			Object->SetStringField(TEXT("kind"), TEXT("cpp"));
+			Object->SetBoolField(TEXT("buildRequired"), true);
+			Object->SetBoolField(TEXT("restartRequired"), true);
+			TSharedPtr<FJsonObject> RegistrationStatus = MakeShared<FJsonObject>();
+			RegistrationStatus->SetStringField(TEXT("state"), TEXT("requires_build_restart"));
+			RegistrationStatus->SetStringField(TEXT("lastError"), ErrorMessage);
+			Object->SetObjectField(TEXT("registrationStatus"), RegistrationStatus);
+			return Object;
+		}
+
+		TSharedPtr<FJsonObject> MakeOfficialCppDraftContent(const TaskAtlasOfficialCpp::FOfficialCppToolsetDraftResult& Result)
+		{
+			TSharedPtr<FJsonObject> Object = MakeOfficialCppDraftFailureContent(Result.ErrorCode, Result.ErrorMessage);
+			Object->SetBoolField(TEXT("succeeded"), Result.bSucceeded);
+			Object->SetStringField(TEXT("generatedDir"), Result.GeneratedDir);
+			Object->SetStringField(TEXT("stagingDir"), Result.StagingDir);
+			Object->SetStringField(TEXT("pluginDescriptorPath"), Result.PluginDescriptorPath);
+			Object->SetStringField(TEXT("modulePath"), Result.PluginDescriptorPath);
+			Object->SetStringField(TEXT("manifestPath"), Result.ManifestPath);
+			Object->SetStringField(TEXT("moduleName"), Result.ModuleName);
+			Object->SetStringField(TEXT("className"), Result.ClassName);
+			Object->SetStringField(TEXT("toolsetName"), Result.ToolsetName);
+			Object->SetStringField(TEXT("schemaHash"), Result.SchemaHash);
+			Object->SetStringField(TEXT("manifestJson"), Result.ManifestJson);
+			Object->SetStringField(TEXT("failureDiagnosticPath"), Result.FailureDiagnosticPath);
+			Object->SetArrayField(TEXT("toolNames"), MakeStringArray(GetOfficialCppToolNamesFromManifest(Result.ManifestJson)));
+			Object->SetArrayField(TEXT("sourceFiles"), MakeStringArray(Result.SourceFiles));
+			Object->SetArrayField(TEXT("validatorIssues"), MakeStringArray(Result.ValidatorIssues));
+			Object->SetBoolField(TEXT("buildRequired"), Result.bBuildRequired);
+			Object->SetBoolField(TEXT("restartRequired"), Result.bRestartRequired);
+
+			TSharedPtr<FJsonObject> Manifest;
+			if (!Result.ManifestJson.IsEmpty())
+			{
+				const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Result.ManifestJson);
+				if (FJsonSerializer::Deserialize(Reader, Manifest) && Manifest.IsValid())
+				{
+					const TSharedPtr<FJsonObject>* RegistrationStatus = nullptr;
+					if (Manifest->TryGetObjectField(TEXT("registrationStatus"), RegistrationStatus) && RegistrationStatus && (*RegistrationStatus).IsValid())
+					{
+						Object->SetObjectField(TEXT("registrationStatus"), *RegistrationStatus);
+					}
+				}
+			}
+			return Object;
+		}
+
+		TaskAtlasOfficialCpp::FOfficialCppToolsetDraftRequest MakeOfficialCppDraftRequest(const TaskAtlasService::FOfficialToolsetDraftRequest& Request)
+		{
+			TaskAtlasOfficialCpp::FOfficialCppToolsetDraftRequest CppRequest;
+			CppRequest.ToolId = Request.ToolId;
+			CppRequest.Title = Request.Title;
+			CppRequest.Description = Request.Description;
+			CppRequest.TaskId = Request.TaskId;
+			CppRequest.ReplayEligibility = Request.ReplayEligibility;
+			CppRequest.ReplayUnavailableReason = Request.ReplayUnavailableReason;
+			CppRequest.CriticalPath = Request.CriticalPath;
+			CppRequest.StepRefs = Request.StepRefs;
+			CppRequest.VisibleCoreToolNames = Request.VisibleCoreToolNames;
+			return CppRequest;
 		}
 
 		bool TryBuildOfficialDraftRequest(
@@ -864,6 +961,12 @@ namespace UnrealMcp
 				}
 
 				const bool bEmitOfficial = GetBoolArgument(Arguments, TEXT("emitOfficial"), false);
+				const FString OfficialVariant = GetStringArgument(Arguments, TEXT("officialVariant"), TEXT("python")).ToLower();
+				if (bEmitOfficial && OfficialVariant != TEXT("python") && OfficialVariant != TEXT("cpp"))
+				{
+					OutResult = MakeExecutionResult(TEXT("officialVariant must be either 'python' or 'cpp'."), nullptr, true);
+					return true;
+				}
 				UnrealMcp::TaskAtlasService::FMakeCompositeResult Result = UnrealMcp::TaskAtlasService::MakeComposite(Request);
 				FString OutcomeText = TEXT("unknown");
 				if (Result.StructuredContent.IsValid())
@@ -878,12 +981,24 @@ namespace UnrealMcp
 					UnrealMcp::TaskAtlasService::FOfficialToolsetDraftRequest OfficialRequest;
 					if (TryBuildOfficialDraftRequest(Request.TaskId, Result, OfficialRequest, OfficialDraftContent))
 					{
-						const UnrealMcp::TaskAtlasService::FOfficialToolsetDraftResult OfficialResult =
-							UnrealMcp::TaskAtlasService::GenerateOfficialToolsetDraft(OfficialRequest);
-						OfficialDraftContent = MakeOfficialDraftContent(OfficialResult);
-						OfficialDraftText = OfficialResult.bSucceeded
-							? FString::Printf(TEXT("; official draft generated at %s"), *OfficialResult.GeneratedDir)
-							: FString::Printf(TEXT("; official draft failed: %s"), *OfficialResult.ErrorMessage);
+						if (OfficialVariant == TEXT("cpp"))
+						{
+							const UnrealMcp::TaskAtlasOfficialCpp::FOfficialCppToolsetDraftResult OfficialResult =
+								UnrealMcp::TaskAtlasOfficialCpp::GenerateOfficialCppToolsetDraft(MakeOfficialCppDraftRequest(OfficialRequest));
+							OfficialDraftContent = MakeOfficialCppDraftContent(OfficialResult);
+							OfficialDraftText = OfficialResult.bSucceeded
+								? FString::Printf(TEXT("; official C++ draft generated at %s"), *OfficialResult.GeneratedDir)
+								: FString::Printf(TEXT("; official C++ draft failed: %s"), *OfficialResult.ErrorMessage);
+						}
+						else
+						{
+							const UnrealMcp::TaskAtlasService::FOfficialToolsetDraftResult OfficialResult =
+								UnrealMcp::TaskAtlasService::GenerateOfficialToolsetDraft(OfficialRequest);
+							OfficialDraftContent = MakeOfficialDraftContent(OfficialResult);
+							OfficialDraftText = OfficialResult.bSucceeded
+								? FString::Printf(TEXT("; official draft generated at %s"), *OfficialResult.GeneratedDir)
+								: FString::Printf(TEXT("; official draft failed: %s"), *OfficialResult.ErrorMessage);
+						}
 					}
 					else
 					{
@@ -893,8 +1008,16 @@ namespace UnrealMcp
 							OfficialDraftContent->TryGetStringField(TEXT("errorMessage"), ErrorMessage);
 						}
 						OfficialDraftText = FString::Printf(TEXT("; official draft failed: %s"), *ErrorMessage);
+						if (OfficialVariant == TEXT("cpp"))
+						{
+							OfficialDraftContent = MakeOfficialCppDraftFailureContent(TEXT("request_failed"), ErrorMessage);
+						}
 					}
-					Result.StructuredContent->SetObjectField(TEXT("officialDraft"), OfficialDraftContent.IsValid() ? OfficialDraftContent : MakeOfficialDraftFailureContent(TEXT("unknown"), TEXT("Official draft generation failed.")));
+					Result.StructuredContent->SetObjectField(TEXT("officialDraft"), OfficialDraftContent.IsValid()
+						? OfficialDraftContent
+						: (OfficialVariant == TEXT("cpp")
+							? MakeOfficialCppDraftFailureContent(TEXT("unknown"), TEXT("Official C++ draft generation failed."))
+							: MakeOfficialDraftFailureContent(TEXT("unknown"), TEXT("Official draft generation failed."))));
 #else
 					Result.StructuredContent->SetObjectField(TEXT("officialDraft"), MakeOfficialDraftUnsupportedContent());
 					OfficialDraftText = TEXT("; official draft skipped: Official toolsets require UE5.8+");

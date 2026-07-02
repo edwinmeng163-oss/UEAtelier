@@ -5,6 +5,7 @@
 #include "UnrealMcpExtensionLifecycle.h"
 #include "UnrealMcpHashUtils.h"
 #include "UnrealMcpModule.h"
+#include "UnrealMcpOfficialCppToolsetEmitter.h"
 #include "UnrealMcpSelfExtensionTools.h"
 #include "UnrealMcpSharedPathResolver.h"
 #include "UnrealMcpToolRegistry.h"
@@ -26,7 +27,9 @@
 #include "HAL/PlatformProcess.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Guid.h"
+#include "Misc/Optional.h"
 #include "Misc/Paths.h"
+#include "Misc/ScopeExit.h"
 #include "Misc/ScopeLock.h"
 #include "Modules/ModuleManager.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
@@ -122,6 +125,11 @@ namespace UnrealMcp::TaskAtlasService
 		bool bTaskAtlasServiceCorruptNextStagingShaForTests = false;
 		bool bTaskAtlasServiceRejectNextTargetReloadForTests = false;
 		bool bTaskAtlasServiceFailNextKnowledgeRefreshForTests = false;
+#if UNREALMCP_HAS_OFFICIAL_TOOLSETS
+		TOptional<bool> GTaskAtlasServiceOfficialCppEditorRunningForTests;
+		FString GTaskAtlasServiceOfficialCppExampleRootForTests;
+		bool bTaskAtlasServiceFailNextOfficialCppBuildAfterCopyForTests = false;
+#endif
 #endif
 
 		FString TaskAtlasServiceNormalizeAbsolutePath(const FString& Path)
@@ -1287,6 +1295,180 @@ namespace UnrealMcp::TaskAtlasService
 			Value.ReplaceInline(TEXT("\\"), TEXT("\\\\"), ESearchCase::CaseSensitive);
 			Value.ReplaceInline(TEXT("\""), TEXT("\\\""), ESearchCase::CaseSensitive);
 			return TEXT("\"") + Value + TEXT("\"");
+		}
+
+		FString TaskAtlasServiceOfficialCppBuildLogsRootDir()
+		{
+			return TaskAtlasServiceNormalizeAbsolutePath(FPaths::Combine(TaskAtlasServiceSavedRootDir(), TEXT("OfficialToolsetBuildLogs")));
+		}
+
+		FString TaskAtlasServiceBuildScriptPath()
+		{
+			const FString EngineDir = FPaths::ConvertRelativePathToFull(FPaths::EngineDir());
+#if PLATFORM_WINDOWS
+			return FPaths::Combine(EngineDir, TEXT("Build/BatchFiles/Build.bat"));
+#elif PLATFORM_MAC
+			return FPaths::Combine(EngineDir, TEXT("Build/BatchFiles/Mac/Build.sh"));
+#elif PLATFORM_LINUX
+			return FPaths::Combine(EngineDir, TEXT("Build/BatchFiles/Linux/Build.sh"));
+#else
+			return FPaths::Combine(EngineDir, TEXT("Build/BatchFiles/Build.sh"));
+#endif
+		}
+
+		FString TaskAtlasServiceHostPlatformName()
+		{
+#if PLATFORM_WINDOWS
+			return TEXT("Win64");
+#elif PLATFORM_MAC
+			return TEXT("Mac");
+#elif PLATFORM_LINUX
+			return TEXT("Linux");
+#else
+			return TEXT("Unknown");
+#endif
+		}
+
+		FString TaskAtlasServiceLeafName(const FString& Path)
+		{
+			FString Normalized = TaskAtlasServiceNormalizeAbsolutePath(Path);
+			return FPaths::GetCleanFilename(Normalized);
+		}
+
+		bool TaskAtlasServiceResolveOfficialCppExample58Project(FString& OutExampleRoot, FString& OutProjectFile, FString& OutFailureReason)
+		{
+			OutExampleRoot.Reset();
+			OutProjectFile.Reset();
+			OutFailureReason.Reset();
+
+#if WITH_DEV_AUTOMATION_TESTS
+			if (!GTaskAtlasServiceOfficialCppExampleRootForTests.IsEmpty())
+			{
+				OutExampleRoot = TaskAtlasServiceNormalizeAbsolutePath(GTaskAtlasServiceOfficialCppExampleRootForTests);
+				OutProjectFile = FPaths::Combine(OutExampleRoot, TEXT("UEvolveExample58.uproject"));
+				return true;
+			}
+#endif
+
+			const FString ProjectDir = TaskAtlasServiceNormalizeAbsolutePath(FPaths::ProjectDir());
+			TArray<FString> CandidateRoots;
+			CandidateRoots.Add(FPaths::Combine(ProjectDir, TEXT("Examples/UEvolveExample58")));
+			if (TaskAtlasServiceLeafName(ProjectDir) == TEXT("UEvolveExample58"))
+			{
+				CandidateRoots.Add(ProjectDir);
+			}
+			CandidateRoots.Add(FPaths::Combine(ProjectDir, TEXT("../UEvolveExample58")));
+			CandidateRoots.Add(FPaths::Combine(ProjectDir, TEXT("../../Examples/UEvolveExample58")));
+
+			for (const FString& CandidateRoot : CandidateRoots)
+			{
+				const FString NormalizedRoot = TaskAtlasServiceNormalizeAbsolutePath(CandidateRoot);
+				const FString ProjectFile = FPaths::Combine(NormalizedRoot, TEXT("UEvolveExample58.uproject"));
+				if (FPaths::FileExists(ProjectFile))
+				{
+					OutExampleRoot = NormalizedRoot;
+					OutProjectFile = ProjectFile;
+					return true;
+				}
+			}
+
+			OutFailureReason = TEXT("Could not resolve Examples/UEvolveExample58/UEvolveExample58.uproject for the official C++ build probe.");
+			return false;
+		}
+
+		bool TaskAtlasServiceIsOfficialCppEditorRunning()
+		{
+#if WITH_DEV_AUTOMATION_TESTS
+			if (GTaskAtlasServiceOfficialCppEditorRunningForTests.IsSet())
+			{
+				return GTaskAtlasServiceOfficialCppEditorRunningForTests.GetValue();
+			}
+#endif
+
+			int32 ReturnCode = -1;
+			FString StdOut;
+			FString StdErr;
+#if PLATFORM_WINDOWS
+			const bool bLaunched = FPlatformProcess::ExecProcess(
+				TEXT("cmd.exe"),
+				TEXT("/C tasklist /FI \"IMAGENAME eq UnrealEditor.exe\" /NH"),
+				&ReturnCode,
+				&StdOut,
+				&StdErr);
+			return bLaunched && ReturnCode == 0 && StdOut.Contains(TEXT("UnrealEditor.exe"), ESearchCase::IgnoreCase);
+#else
+			const bool bLaunched = FPlatformProcess::ExecProcess(
+				TEXT("/usr/bin/pgrep"),
+				TEXT("-x UnrealEditor"),
+				&ReturnCode,
+				&StdOut,
+				&StdErr);
+			return bLaunched && ReturnCode == 0 && !StdOut.TrimStartAndEnd().IsEmpty();
+#endif
+		}
+
+		TSharedPtr<FJsonObject> TaskAtlasServiceBuildStatusObject(const FOfficialCppToolsetBuildDraftResult& Result)
+		{
+			TSharedPtr<FJsonObject> BuildStatus = MakeShared<FJsonObject>();
+			BuildStatus->SetStringField(TEXT("state"), Result.BuildStatus);
+			BuildStatus->SetStringField(TEXT("errorCode"), Result.ErrorCode);
+			BuildStatus->SetStringField(TEXT("errorMessage"), Result.ErrorMessage);
+			BuildStatus->SetStringField(TEXT("instructions"), Result.Instructions);
+			BuildStatus->SetStringField(TEXT("logPath"), Result.BuildLogPath);
+			BuildStatus->SetStringField(TEXT("mountedPluginDir"), Result.MountedPluginDir);
+			BuildStatus->SetBoolField(TEXT("mountedCopyRemoved"), Result.bMountedCopyRemoved);
+			BuildStatus->SetBoolField(TEXT("cleanupFailed"), Result.bCleanupFailed);
+			BuildStatus->SetStringField(TEXT("cleanupErrorMessage"), Result.CleanupErrorMessage);
+			BuildStatus->SetNumberField(TEXT("returnCode"), Result.ReturnCode);
+			BuildStatus->SetNumberField(TEXT("elapsedSeconds"), Result.ElapsedSeconds);
+			BuildStatus->SetStringField(TEXT("updatedAt"), FDateTime::UtcNow().ToIso8601());
+			return BuildStatus;
+		}
+
+		bool TaskAtlasServiceUpdateOfficialCppBuildManifest(FOfficialCppToolsetBuildDraftResult& Result)
+		{
+			if (Result.ManifestPath.IsEmpty())
+			{
+				return false;
+			}
+
+			TSharedPtr<FJsonObject> Manifest;
+			if (!TaskAtlasServiceLoadJsonObject(Result.ManifestPath, Manifest) || !Manifest.IsValid())
+			{
+				return false;
+			}
+			Manifest->SetObjectField(TEXT("buildStatus"), TaskAtlasServiceBuildStatusObject(Result));
+			Manifest->SetBoolField(TEXT("restartRequired"), true);
+			TSharedPtr<FJsonObject> RegistrationStatus;
+			const TSharedPtr<FJsonObject>* ExistingRegistrationStatus = nullptr;
+			if (Manifest->TryGetObjectField(TEXT("registrationStatus"), ExistingRegistrationStatus) && ExistingRegistrationStatus && (*ExistingRegistrationStatus).IsValid())
+			{
+				RegistrationStatus = *ExistingRegistrationStatus;
+			}
+			else
+			{
+				RegistrationStatus = MakeShared<FJsonObject>();
+				Manifest->SetObjectField(TEXT("registrationStatus"), RegistrationStatus);
+			}
+			RegistrationStatus->SetStringField(TEXT("state"), TEXT("requires_build_restart"));
+			RegistrationStatus->SetStringField(TEXT("lastError"), Result.ErrorMessage);
+			const bool bWrote = TaskAtlasServiceWriteJsonObject(Manifest, Result.ManifestPath);
+			Result.ManifestJson = TaskAtlasServiceJsonToPrettyString(Manifest);
+			return bWrote;
+		}
+
+		void TaskAtlasServiceSetOfficialCppBuildStatus(
+			FOfficialCppToolsetBuildDraftResult& Result,
+			const FString& BuildStatus,
+			const FString& ErrorCode,
+			const FString& ErrorMessage,
+			const FString& Instructions = FString())
+		{
+			Result.BuildStatus = BuildStatus;
+			Result.ErrorCode = ErrorCode;
+			Result.ErrorMessage = ErrorMessage;
+			Result.Instructions = Instructions;
+			Result.bSucceeded = BuildStatus == TEXT("succeeded");
 		}
 
 		FString TaskAtlasServicePythonStringLiteral(const FString& Value)
@@ -2501,12 +2683,298 @@ namespace UnrealMcp::TaskAtlasService
 	{
 		bTaskAtlasServiceFailNextKnowledgeRefreshForTests = true;
 	}
+#if UNREALMCP_HAS_OFFICIAL_TOOLSETS
+	void SetOfficialCppBuildEditorRunningForTests(bool bIsRunning)
+	{
+		GTaskAtlasServiceOfficialCppEditorRunningForTests = bIsRunning;
+	}
+
+	void ClearOfficialCppBuildEditorRunningForTests()
+	{
+		GTaskAtlasServiceOfficialCppEditorRunningForTests.Reset();
+	}
+
+	void SetOfficialCppBuildExampleRootForTests(const FString& ExampleRootDir)
+	{
+		GTaskAtlasServiceOfficialCppExampleRootForTests = ExampleRootDir;
+	}
+
+	void ClearOfficialCppBuildExampleRootForTests()
+	{
+		GTaskAtlasServiceOfficialCppExampleRootForTests.Reset();
+	}
+
+	void FailNextOfficialCppBuildAfterCopyForTests()
+	{
+		bTaskAtlasServiceFailNextOfficialCppBuildAfterCopyForTests = true;
+	}
+#endif
 #endif
 
 #if UNREALMCP_HAS_OFFICIAL_TOOLSETS
 	FString OfficialToolsetDraftsRootDir()
 	{
 		return TaskAtlasServiceOfficialDraftsRootDir();
+	}
+
+	FOfficialCppToolsetBuildDraftResult BuildOfficialCppToolsetDraft(const FString& ToolId)
+	{
+		check(IsInGameThread());
+		FOfficialCppToolsetBuildDraftResult Result;
+		Result.ToolId = ToolId.TrimStartAndEnd();
+		Result.bRestartRequired = true;
+
+		if (TaskAtlasServiceIsOfficialCppEditorRunning())
+		{
+			TaskAtlasServiceSetOfficialCppBuildStatus(
+				Result,
+				TEXT("buildBlockedByOpenEditor"),
+				TEXT("editor_open"),
+				TEXT("UnrealEditor is running; official C++ draft builds require the editor to be closed first."),
+				TEXT("Close every UnrealEditor process, then run Build draft (UE5.8) again. This action never kills the editor automatically."));
+			return Result;
+		}
+
+		FScopeLock MutationGuard(&GTaskAtlasServiceMutationLock);
+
+		const FString DraftRoot = TaskAtlasServiceOfficialDraftsRootDir();
+		const FString CanonicalDraftRoot = TaskAtlasServiceNormalizeAbsolutePath(DraftRoot);
+		Result.DraftDir = TaskAtlasServiceNormalizeAbsolutePath(FPaths::Combine(CanonicalDraftRoot, Result.ToolId));
+		if (!TaskAtlasServiceIsSafeDirectoryName(Result.ToolId) || !TaskAtlasServicePathEqualsOrChild(Result.DraftDir, CanonicalDraftRoot))
+		{
+			TaskAtlasServiceSetOfficialCppBuildStatus(
+				Result,
+				TEXT("failed"),
+				TEXT("invalid_name"),
+				TEXT("Refused to build official C++ toolset draft outside Saved/UnrealMcp/OfficialToolsetDrafts."));
+			return Result;
+		}
+		if (!IFileManager::Get().DirectoryExists(*Result.DraftDir))
+		{
+			TaskAtlasServiceSetOfficialCppBuildStatus(
+				Result,
+				TEXT("failed"),
+				TEXT("draft_not_found"),
+				FString::Printf(TEXT("Official C++ toolset draft not found: %s"), *Result.DraftDir));
+			return Result;
+		}
+
+		Result.ManifestPath = FPaths::Combine(Result.DraftDir, TEXT("manifest.json"));
+		TSharedPtr<FJsonObject> Manifest;
+		if (!TaskAtlasServiceLoadJsonObject(Result.ManifestPath, Manifest) || !Manifest.IsValid())
+		{
+			TaskAtlasServiceSetOfficialCppBuildStatus(
+				Result,
+				TEXT("failed"),
+				TEXT("manifest_missing"),
+				FString::Printf(TEXT("Official C++ toolset draft manifest missing or invalid: %s"), *Result.ManifestPath));
+			return Result;
+		}
+
+		FString Variant;
+		Manifest->TryGetStringField(TEXT("variant"), Variant);
+		if (Variant != TEXT("cpp"))
+		{
+			TaskAtlasServiceSetOfficialCppBuildStatus(
+				Result,
+				TEXT("failed"),
+				TEXT("not_cpp_variant"),
+				TEXT("Build draft (UE5.8) only accepts officialVariant=cpp drafts."));
+			TaskAtlasServiceUpdateOfficialCppBuildManifest(Result);
+			return Result;
+		}
+
+		if (!Manifest->TryGetStringField(TEXT("pluginName"), Result.PluginName) || Result.PluginName.TrimStartAndEnd().IsEmpty())
+		{
+			TaskAtlasServiceSetOfficialCppBuildStatus(
+				Result,
+				TEXT("failed"),
+				TEXT("manifest_missing_plugin_name"),
+				TEXT("Official C++ toolset draft manifest is missing pluginName."));
+			TaskAtlasServiceUpdateOfficialCppBuildManifest(Result);
+			return Result;
+		}
+		Result.PluginName = Result.PluginName.TrimStartAndEnd();
+		if (!TaskAtlasServiceIsSafeDirectoryName(Result.PluginName))
+		{
+			TaskAtlasServiceSetOfficialCppBuildStatus(
+				Result,
+				TEXT("failed"),
+				TEXT("unsafe_plugin_name"),
+				TEXT("Official C++ toolset draft pluginName is not a safe directory name."));
+			TaskAtlasServiceUpdateOfficialCppBuildManifest(Result);
+			return Result;
+		}
+
+		Result.PluginSourceDir = TaskAtlasServiceNormalizeAbsolutePath(FPaths::Combine(Result.DraftDir, TEXT("cpp"), Result.PluginName));
+		if (!TaskAtlasServicePathEqualsOrChild(Result.PluginSourceDir, Result.DraftDir)
+			|| !IFileManager::Get().DirectoryExists(*Result.PluginSourceDir))
+		{
+			TaskAtlasServiceSetOfficialCppBuildStatus(
+				Result,
+				TEXT("failed"),
+				TEXT("plugin_source_missing"),
+				FString::Printf(TEXT("Official C++ toolset draft plugin source directory missing: %s"), *Result.PluginSourceDir));
+			TaskAtlasServiceUpdateOfficialCppBuildManifest(Result);
+			return Result;
+		}
+
+		FString ExampleRoot;
+		FString ResolveFailure;
+		if (!TaskAtlasServiceResolveOfficialCppExample58Project(ExampleRoot, Result.ProjectFilePath, ResolveFailure))
+		{
+			TaskAtlasServiceSetOfficialCppBuildStatus(
+				Result,
+				TEXT("failed"),
+				TEXT("example58_missing"),
+				ResolveFailure);
+			TaskAtlasServiceUpdateOfficialCppBuildManifest(Result);
+			return Result;
+		}
+
+		const FString PluginsRoot = TaskAtlasServiceNormalizeAbsolutePath(FPaths::Combine(ExampleRoot, TEXT("Plugins")));
+		Result.MountedPluginDir = TaskAtlasServiceNormalizeAbsolutePath(FPaths::Combine(PluginsRoot, Result.PluginName));
+		if (!TaskAtlasServicePathEqualsOrChild(Result.MountedPluginDir, PluginsRoot))
+		{
+			TaskAtlasServiceSetOfficialCppBuildStatus(
+				Result,
+				TEXT("failed"),
+				TEXT("mount_path_unsafe"),
+				TEXT("Refused to mount official C++ toolset draft outside Examples/UEvolveExample58/Plugins."));
+			TaskAtlasServiceUpdateOfficialCppBuildManifest(Result);
+			return Result;
+		}
+		if (IFileManager::Get().DirectoryExists(*Result.MountedPluginDir))
+		{
+			TaskAtlasServiceSetOfficialCppBuildStatus(
+				Result,
+				TEXT("failed"),
+				TEXT("mount_exists"),
+				FString::Printf(TEXT("Temporary official C++ build mount already exists and will not be overwritten: %s"), *Result.MountedPluginDir));
+			TaskAtlasServiceUpdateOfficialCppBuildManifest(Result);
+			return Result;
+		}
+
+		const FString LogName = FString::Printf(
+			TEXT("%s-%s.log"),
+			*TaskAtlasServiceMakeSafeTimestamp(FDateTime::UtcNow().ToIso8601()),
+			*Result.ToolId);
+		Result.BuildLogPath = FPaths::Combine(TaskAtlasServiceOfficialCppBuildLogsRootDir(), LogName);
+		Result.BuildScriptPath = TaskAtlasServiceBuildScriptPath();
+		const FString MountedPluginDescriptor = FPaths::Combine(Result.MountedPluginDir, Result.PluginName + TEXT(".uplugin"));
+
+		bool bCleanupArmed = true;
+		auto CleanupMountedCopy = [&Result]()
+		{
+			if (IFileManager::Get().DirectoryExists(*Result.MountedPluginDir))
+			{
+				IFileManager::Get().DeleteDirectory(*Result.MountedPluginDir, false, true);
+			}
+			Result.bMountedCopyRemoved = !IFileManager::Get().DirectoryExists(*Result.MountedPluginDir);
+			if (!Result.bMountedCopyRemoved)
+			{
+				Result.bCleanupFailed = true;
+				Result.CleanupErrorMessage = FString::Printf(TEXT("Failed to remove temporary official C++ build mount: %s"), *Result.MountedPluginDir);
+			}
+		};
+		ON_SCOPE_EXIT
+		{
+			if (bCleanupArmed)
+			{
+				CleanupMountedCopy();
+			}
+		};
+		auto FinalizeMountedBuildResult = [&]()
+		{
+			CleanupMountedCopy();
+			bCleanupArmed = false;
+			TaskAtlasServiceUpdateOfficialCppBuildManifest(Result);
+			return Result;
+		};
+
+		const double StartSeconds = FPlatformTime::Seconds();
+		IFileManager::Get().MakeDirectory(*PluginsRoot, true);
+		if (!FPlatformFileManager::Get().GetPlatformFile().CopyDirectoryTree(*Result.MountedPluginDir, *Result.PluginSourceDir, true))
+		{
+			Result.ElapsedSeconds = FPlatformTime::Seconds() - StartSeconds;
+			TaskAtlasServiceSetOfficialCppBuildStatus(
+				Result,
+				TEXT("failed"),
+				TEXT("mount_copy_failed"),
+				FString::Printf(TEXT("Failed to copy official C++ toolset draft to temporary build mount: %s"), *Result.MountedPluginDir));
+			return FinalizeMountedBuildResult();
+		}
+
+#if WITH_DEV_AUTOMATION_TESTS
+		if (bTaskAtlasServiceFailNextOfficialCppBuildAfterCopyForTests)
+		{
+			bTaskAtlasServiceFailNextOfficialCppBuildAfterCopyForTests = false;
+			Result.ElapsedSeconds = FPlatformTime::Seconds() - StartSeconds;
+			FFileHelper::SaveStringToFile(
+				TEXT("Forced official C++ build failure after copy for automation.\n"),
+				*Result.BuildLogPath,
+				FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+			TaskAtlasServiceSetOfficialCppBuildStatus(
+				Result,
+				TEXT("failed"),
+				TEXT("forced_build_failure_for_tests"),
+				TEXT("Forced official C++ build failure after copy for automation."));
+			return FinalizeMountedBuildResult();
+		}
+#endif
+
+		if (!FPaths::FileExists(Result.BuildScriptPath))
+		{
+			Result.ElapsedSeconds = FPlatformTime::Seconds() - StartSeconds;
+			TaskAtlasServiceSetOfficialCppBuildStatus(
+				Result,
+				TEXT("failed"),
+				TEXT("build_script_missing"),
+				FString::Printf(TEXT("UE build script not found: %s"), *Result.BuildScriptPath));
+			return FinalizeMountedBuildResult();
+		}
+
+		const FString Params = FString::Printf(
+			TEXT("MyProjectEditor %s Development -Project=%s -WaitMutex -plugin=%s"),
+			*TaskAtlasServiceHostPlatformName(),
+			*TaskAtlasServiceQuoteCommandLineArgument(Result.ProjectFilePath),
+			*TaskAtlasServiceQuoteCommandLineArgument(MountedPluginDescriptor));
+		FString StdOut;
+		FString StdErr;
+		const bool bLaunched = FPlatformProcess::ExecProcess(
+			*Result.BuildScriptPath,
+			*Params,
+			&Result.ReturnCode,
+			&StdOut,
+			&StdErr,
+			*FPaths::ConvertRelativePathToFull(FPaths::EngineDir()));
+		Result.ElapsedSeconds = FPlatformTime::Seconds() - StartSeconds;
+
+		const FString CombinedLog = StdOut + (StdErr.IsEmpty() ? FString() : FString::Printf(TEXT("\n\n[stderr]\n%s"), *StdErr));
+		FFileHelper::SaveStringToFile(CombinedLog, *Result.BuildLogPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+
+		if (!bLaunched)
+		{
+			TaskAtlasServiceSetOfficialCppBuildStatus(
+				Result,
+				TEXT("failed"),
+				TEXT("build_launch_failed"),
+				TEXT("Failed to launch UE5.8 UBT build for official C++ toolset draft."));
+			return FinalizeMountedBuildResult();
+		}
+
+		if (Result.ReturnCode != 0)
+		{
+			TaskAtlasServiceSetOfficialCppBuildStatus(
+				Result,
+				TEXT("failed"),
+				TEXT("build_failed"),
+				FString::Printf(TEXT("UE5.8 UBT build failed for official C++ toolset draft with exit code %d."), Result.ReturnCode));
+			return FinalizeMountedBuildResult();
+		}
+
+		TaskAtlasServiceSetOfficialCppBuildStatus(Result, TEXT("succeeded"), FString(), FString());
+		return FinalizeMountedBuildResult();
 	}
 
 	FOfficialToolsetDraftResult GenerateOfficialToolsetDraft(const FOfficialToolsetDraftRequest& Req)

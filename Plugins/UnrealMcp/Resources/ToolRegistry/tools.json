@@ -11463,7 +11463,16 @@
           "emitOfficial": {
             "type": "boolean",
             "default": false,
-            "description": "UE5.8 only: also generate an official ToolsetRegistry Python draft for this composite under Saved/UnrealMcp/OfficialToolsetDrafts/. Inert on UE5.6/5.7."
+            "description": "UE5.8 only: also generate an official ToolsetRegistry draft for this composite under Saved/UnrealMcp/OfficialToolsetDrafts/. Inert on UE5.6/5.7."
+          },
+          "officialVariant": {
+            "type": "string",
+            "enum": [
+              "python",
+              "cpp"
+            ],
+            "default": "python",
+            "description": "UE5.8 only: official ToolsetRegistry draft variant to generate when emitOfficial=true. Defaults to python; cpp emits a build-required C++ draft."
           },
           "overrideStepArgs": {
             "type": "array",

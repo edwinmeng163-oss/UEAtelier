@@ -1448,7 +1448,8 @@ namespace UnrealMcp
 				Properties->SetObjectField(TEXT("taskId"), MakeStringProperty(TEXT("Task Atlas task id to classify and convert."), FString()));
 				Properties->SetObjectField(TEXT("preferDocumentOnly"), MakeBoolProperty(TEXT("Dry-run/document-only mode. When true, never writes Tools/UnrealMcpPyTools and writes/returns a markdown draft instead."), false));
 				Properties->SetObjectField(TEXT("forceWriteEvenIfBlocked"), MakeBoolProperty(TEXT("Developer escape hatch. Still requires AssistantRun approval when invoked by AI; UI must not set this."), false));
-				Properties->SetObjectField(TEXT("emitOfficial"), MakeBoolProperty(TEXT("UE5.8 only: also generate an official ToolsetRegistry Python draft for this composite under Saved/UnrealMcp/OfficialToolsetDrafts/. Inert on UE5.6/5.7."), false));
+				Properties->SetObjectField(TEXT("emitOfficial"), MakeBoolProperty(TEXT("UE5.8 only: also generate an official ToolsetRegistry draft for this composite under Saved/UnrealMcp/OfficialToolsetDrafts/. Inert on UE5.6/5.7."), false));
+				Properties->SetObjectField(TEXT("officialVariant"), MakeEnumStringProperty(TEXT("UE5.8 only: official ToolsetRegistry draft variant to generate when emitOfficial=true. Defaults to python; cpp emits a build-required C++ draft."), TEXT("python"), TArray<FString>{ TEXT("python"), TEXT("cpp") }));
 				Properties->SetObjectField(TEXT("overrideStepArgs"), OverrideArray);
 
 				FUnrealMcpToolDescriptor Descriptor = MakeDescriptor(

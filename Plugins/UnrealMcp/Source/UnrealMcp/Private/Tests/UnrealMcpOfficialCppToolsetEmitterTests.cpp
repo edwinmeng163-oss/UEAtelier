@@ -360,4 +360,112 @@ bool FUnrealMcpOfficialCppToolsetReemitHashDeterminismTest::RunTest(const FStrin
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FUnrealMcpOfficialCppToolsetBuildBlockedByEditorTest,
+	"UnrealMcp.OfficialCppToolset.BuildBlockedByEditor",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FUnrealMcpOfficialCppToolsetBuildBlockedByEditorTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	UnrealMcp::TaskAtlasService::SetOfficialCppBuildEditorRunningForTests(true);
+	ON_SCOPE_EXIT
+	{
+		UnrealMcp::TaskAtlasService::ClearOfficialCppBuildEditorRunningForTests();
+	};
+
+	const UnrealMcp::TaskAtlasService::FOfficialCppToolsetBuildDraftResult Result =
+		UnrealMcp::TaskAtlasService::BuildOfficialCppToolsetDraft(TEXT("codex_cpp_editor_gate"));
+	TestFalse(TEXT("build blocked is not success"), Result.bSucceeded);
+	TestEqual(TEXT("blocked status"), Result.BuildStatus, TEXT("buildBlockedByOpenEditor"));
+	TestEqual(TEXT("blocked code"), Result.ErrorCode, TEXT("editor_open"));
+	TestTrue(TEXT("blocked instructions mention close"), Result.Instructions.Contains(TEXT("Close every UnrealEditor process")));
+	TestTrue(TEXT("no mount during blocked gate"), Result.MountedPluginDir.IsEmpty());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FUnrealMcpOfficialCppToolsetBuildCleanupFailSafeTest,
+	"UnrealMcp.OfficialCppToolset.BuildCleanupFailSafe",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FUnrealMcpOfficialCppToolsetBuildCleanupFailSafeTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace UnrealMcpOfficialCppToolsetEmitterTests;
+
+	const FString ToolId = FString(TEXT("codex_cpp_build_cleanup_")) + FGuid::NewGuid().ToString(EGuidFormats::Digits).Left(8).ToLower();
+	const FString ExampleRoot = FPaths::Combine(
+		FPaths::ProjectIntermediateDir(),
+		TEXT("UnrealMcpOfficialCppBuildTests"),
+		ToolId,
+		TEXT("UEvolveExample58"));
+	IFileManager::Get().DeleteDirectory(*DraftDir(ToolId), false, true);
+	IFileManager::Get().DeleteDirectory(*ExampleRoot, false, true);
+	ON_SCOPE_EXIT
+	{
+		UnrealMcp::TaskAtlasService::ClearOfficialCppBuildEditorRunningForTests();
+		UnrealMcp::TaskAtlasService::ClearOfficialCppBuildExampleRootForTests();
+		IFileManager::Get().DeleteDirectory(*DraftDir(ToolId), false, true);
+		IFileManager::Get().DeleteDirectory(*ExampleRoot, false, true);
+	};
+
+	UnrealMcp::TaskAtlasOfficialCpp::FOfficialCppToolsetDraftRequest Request;
+	Request.ToolId = ToolId;
+	Request.Title = TEXT("Official C++ Build Cleanup Test");
+	Request.Description = TEXT("Build cleanup test draft.");
+	Request.TaskId = TaskId;
+	Request.CriticalPath = CriticalPathForFixture();
+	Request.StepRefs = StepRefsForFixture();
+	Request.VisibleCoreToolNames = VisibleCoreToolsForFixture();
+	const UnrealMcp::TaskAtlasOfficialCpp::FOfficialCppToolsetDraftResult DraftResult =
+		UnrealMcp::TaskAtlasOfficialCpp::GenerateOfficialCppToolsetDraft(Request);
+	TestTrue(TEXT("draft succeeds"), DraftResult.bSucceeded);
+	if (!DraftResult.bSucceeded)
+	{
+		AddError(DraftResult.ErrorMessage);
+		return false;
+	}
+	TestTrue(TEXT("saved draft exists before build"), IFileManager::Get().DirectoryExists(*DraftResult.GeneratedDir));
+
+	UnrealMcp::TaskAtlasService::SetOfficialCppBuildEditorRunningForTests(false);
+	UnrealMcp::TaskAtlasService::SetOfficialCppBuildExampleRootForTests(ExampleRoot);
+	UnrealMcp::TaskAtlasService::FailNextOfficialCppBuildAfterCopyForTests();
+	const UnrealMcp::TaskAtlasService::FOfficialCppToolsetBuildDraftResult BuildResult =
+		UnrealMcp::TaskAtlasService::BuildOfficialCppToolsetDraft(ToolId);
+	TestFalse(TEXT("forced build failure is not success"), BuildResult.bSucceeded);
+	TestEqual(TEXT("forced build status"), BuildResult.BuildStatus, TEXT("failed"));
+	TestEqual(TEXT("forced build code"), BuildResult.ErrorCode, TEXT("forced_build_failure_for_tests"));
+	TestTrue(TEXT("mounted copy removed"), BuildResult.bMountedCopyRemoved);
+	TestFalse(TEXT("mounted copy gone"), IFileManager::Get().DirectoryExists(*BuildResult.MountedPluginDir));
+	TestTrue(TEXT("saved draft remains canonical"), IFileManager::Get().DirectoryExists(*DraftResult.GeneratedDir));
+
+	TSharedPtr<FJsonObject> Manifest;
+	TestTrue(TEXT("updated manifest parses"), ParseJsonObject(BuildResult.ManifestJson, Manifest));
+	if (Manifest.IsValid())
+	{
+		bool bRestartRequired = false;
+		Manifest->TryGetBoolField(TEXT("restartRequired"), bRestartRequired);
+		TestTrue(TEXT("restart still required"), bRestartRequired);
+		const TSharedPtr<FJsonObject>* BuildStatus = nullptr;
+		TestTrue(TEXT("buildStatus object"), Manifest->TryGetObjectField(TEXT("buildStatus"), BuildStatus) && BuildStatus && (*BuildStatus).IsValid());
+		if (BuildStatus && (*BuildStatus).IsValid())
+		{
+			FString State;
+			(*BuildStatus)->TryGetStringField(TEXT("state"), State);
+			TestEqual(TEXT("manifest build failed"), State, TEXT("failed"));
+		}
+		const TSharedPtr<FJsonObject>* RegistrationStatus = nullptr;
+		TestTrue(TEXT("registrationStatus object"), Manifest->TryGetObjectField(TEXT("registrationStatus"), RegistrationStatus) && RegistrationStatus && (*RegistrationStatus).IsValid());
+		if (RegistrationStatus && (*RegistrationStatus).IsValid())
+		{
+			FString State;
+			(*RegistrationStatus)->TryGetStringField(TEXT("state"), State);
+			TestEqual(TEXT("registration remains build restart"), State, TEXT("requires_build_restart"));
+		}
+	}
+	return true;
+}
+
 #endif

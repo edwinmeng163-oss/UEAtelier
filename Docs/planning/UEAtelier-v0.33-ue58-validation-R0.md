@@ -372,7 +372,20 @@ gate-exclusion builds green; tool count stays 190.
   `UnrealMcp.OfficialToolset.MakeCompositeWired`
   (generate → validate → register → delegate through `call_tool` → policy allow → audit
   → rollback) + live `:8000` round-trip smoke.
-- Chunk C3 — NEXT: C++ `UToolsetDefinition` path (decision #6: generate → build → restart).
+- Chunk C3 wave 1 (`d9556be`) — DONE: compat-gated C++ official draft emitter +
+  validator. `BuildOfficialCppToolsetFiles` emits a complete link-dependent
+  `UToolsetDefinition` plugin payload under `Saved/UnrealMcp/OfficialToolsetDrafts/<id>/cpp/`
+  with manifest lifecycle fields `buildRequired:true`, `restartRequired:true`, and
+  `registrationStatus.state:"requires_build_restart"`; `ValidateOfficialCppToolsetFiles`
+  pins the deterministic file set, delegation-only source shape, and manifest/hash
+  consistency. Proven by pure Automation tests under `UnrealMcp.OfficialCppToolset.*`.
+- Chunk C3 wave 2 — IN PROGRESS: additive `officialVariant:"python"|"cpp"` wiring on
+  `task_atlas_make_composite` (default Python, tool count still 190), a compat-gated
+  Task Atlas UI selector, and an explicit `Build draft (UE5.8)` action for generated
+  C++ drafts. The build action gates on open `UnrealEditor`, temporarily mounts the
+  draft under `Examples/UEvolveExample58/Plugins/`, runs UBT only by explicit user
+  action, writes `buildStatus`, keeps `registrationStatus.state:"requires_build_restart"`,
+  and removes the temp mount on every post-copy path.
 - Chunk C4 — AgentSkill promotion (instruction-only) + manifest `schemaHash` drift
   detector + docs/freshness sweep.
 
