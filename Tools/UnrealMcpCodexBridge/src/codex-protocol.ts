@@ -311,6 +311,10 @@ export async function startCodexAppServer(
     configOverrides[`mcp_servers.${mcpRegistration.name}.transport`] = tomlString("streamable-http");
     const bearer = process.env.UEVOLVE_MCP_BEARER;
     if (bearer) configOverrides[`mcp_servers.${mcpRegistration.name}.bearer_token`] = tomlString(bearer);
+    // Codex's workspace-write sandbox blocks outbound network by default, so the model's rmcp
+    // MCP client cannot reach the streamable-http UEAtelier server on 127.0.0.1:8765. Grant
+    // network access for THIS app-server only (scoped; no global ~/.codex/config.toml change).
+    configOverrides["sandbox_workspace_write.network_access"] = "true";
   }
   Object.assign(configOverrides, options.configOverrides ?? {});
   for (const [key, value] of Object.entries(configOverrides)) spawnArgs.push("-c", `${key}=${value}`);
