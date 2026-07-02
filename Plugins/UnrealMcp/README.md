@@ -2,7 +2,7 @@
 
 This plugin runs a local Model Context Protocol server inside Unreal Editor and adds an in-editor command and AI chat window.
 
-Current plugin `VersionName: 0.32.2`.
+Current plugin `VersionName: 0.34.0`.
 
 ## What It Exposes
 

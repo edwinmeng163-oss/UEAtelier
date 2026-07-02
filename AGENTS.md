@@ -16,7 +16,7 @@ Current plugin metadata:
 ```text
 Plugins/UnrealMcp/UnrealMcp.uplugin
 FriendlyName: UEAtelier
-VersionName: 0.32.2
+VersionName: 0.34.0
 EngineVersion: 5.6.0
 Type: Editor plugin
 Required plugin: PythonScriptPlugin
@@ -191,7 +191,29 @@ CLI <-> Chat Panel sync tools (chat_inject_user_input, chat_history_tail,
 chat_tool_log_tail) and hardens Task Atlas eligibility against external-client
 registry-miss noise.
 
-Current project status: v0.32.2 (2026-06-11) is an MCP protocol conformance
+Current project status: v0.34.0 (2026-07-02) ships the Make-Tool-Set
+vetting foundation plus the Codex bridge workspace-write network fix. Task
+Atlas generated composites (`user.atlas_*`) can be approved in-editor with
+"Approve real writes" and then execute their dangerous `call_tool` steps for
+real without per-run confirmation, while wire/MCP clients cannot grant that
+authority. Approval is fail-closed through source-policy validation (closed
+imports, no dynamic access/reflection, no direct Unreal usage, no file IO),
+manifest allowlist subset checks, live `main.py` SHA-256 binding, a real
+vetted-context test run, TOCTOU hash re-check, atomic marker write, registry
+reload, and audited `toolset_vetted` persistence; revocation is fail-safe and
+every vetted real write emits sanitized `vetted_real_write` audit. The four
+structural hard denies remain non-overridable: hidden tools, user-to-user
+calls, call-tool depth, and workflow_run. Made-tools UI and
+`unreal.user_registry_introspect` now report vetted marker/hash/approver
+status, and the bridge sets workspace-write `network_access=true` so
+in-editor AI can reach `http://127.0.0.1:8765/mcp`. Version 0.33 was an
+internal UE5.8 validation track and is not a public release. Tool count stays
+190 (visible tools/list count stays 178); UE 5.6 + 5.7 dual-engine builds
+pass; VetMadeTool 11/11, VettedToolset 5/5, CallTool 9/9, TaskAtlas 38/38,
+and registry validation 190/190 pass; full-host automation converges to the
+two known baseline failures. Trilingual notes at `Docs/Release-2026-07.md`.
+
+Earlier project status: v0.32.2 (2026-06-11) is an MCP protocol conformance
 patch on v0.32.1. codex-cli 0.132 moved its MCP client to the official rmcp
 0.15 Rust SDK, whose strict untagged-result parsing mis-read our tools/list
 response — it carried a non-spec top-level `structuredContent`
