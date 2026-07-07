@@ -55,6 +55,7 @@ For a quick start, read `Docs/Release-2026-07.md`, then `AGENTS.md`, then the
 Deployment section later in this README.
 
 Demo gallery: see [Demo/README.md](Demo/README.md).
+Project wiki (EN / 中文 / 日本語): [edwinmeng163-oss.github.io/UEAtelier-wiki](https://edwinmeng163-oss.github.io/UEAtelier-wiki/).
 Contribute: pick a template under [.github/ISSUE_TEMPLATE/](.github/ISSUE_TEMPLATE/).
 
 ## 中文概览
@@ -95,6 +96,7 @@ project memory 和 supervisor 恢复链路。
 README 后面的 Deployment 部分。
 
 Demo 库：见 [Demo/README.md](Demo/README.md)。
+项目 Wiki（EN / 中文 / 日本語）：[edwinmeng163-oss.github.io/UEAtelier-wiki](https://edwinmeng163-oss.github.io/UEAtelier-wiki/)。
 参与贡献：见 [Issue templates](.github/ISSUE_TEMPLATE/) 任选模板提 issue。
 
 ## 日本語概要
@@ -135,6 +137,7 @@ quick start には `Docs/Release-2026-07.md`、続いて `AGENTS.md`、さらに
 README 後半の Deployment section を参照してください。
 
 デモギャラリー：[Demo/README.md](Demo/README.md) を参照。
+プロジェクト Wiki（EN / 中文 / 日本語）：[edwinmeng163-oss.github.io/UEAtelier-wiki](https://edwinmeng163-oss.github.io/UEAtelier-wiki/) を参照。
 コントリビュート：[.github/ISSUE_TEMPLATE/](.github/ISSUE_TEMPLATE/) のテンプレートから issue を作成してください。
 
 ## Current Status
