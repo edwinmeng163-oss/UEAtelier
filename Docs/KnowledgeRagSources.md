@@ -2,13 +2,13 @@
 
 ## 1. Purpose
 
-UEAtelier's current RAG layer can explain tools, docs, tests, and official Unreal
-documentation, but it cannot yet answer session-grounded requests such as
-"按上次的方式布置 FPS 场景". The current index refresh writes cards from official
-docs, versioned markdown, and the ToolRegistry only
-(`Plugins/UnrealMcp/Source/UnrealMcp/Private/UnrealMcpKnowledgeTools.cpp:1200`,
-`Plugins/UnrealMcp/Source/UnrealMcp/Private/UnrealMcpKnowledgeTools.cpp:1213`,
-`Plugins/UnrealMcp/Source/UnrealMcp/Private/UnrealMcpKnowledgeTools.cpp:1218`).
+UEAtelier's v0.35 RAG layer actively indexes five source kinds: official docs,
+versioned markdown, ToolRegistry cards, promoted skills, and bounded
+ActivityLog spans. ActivityLog is implemented but defaults off; promoted local
+markdown has its own `includePromotedSources` switch. ProjectMemory/ChatHistory
+raw indexing remains unimplemented, so `runtime-memory` stays reserved. This
+keeps session evidence possible without making private chat summaries an
+unconditional provider-context input.
 
 This document is the authoritative source taxonomy for the closed-loop RAG work until it is superseded.
 It sits beside the RAG plan named by the project read order (`AGENTS.md:103`) and is covered by the documentation freshness rule (`AGENTS.md:112`).
@@ -179,9 +179,10 @@ extension manifests already carry `sessionId`
 | `mcp_tool_call` | Legacy skill-recorder MCP call event; semantically maps to `tool_call`. | legacy | Current dispatcher hook (`Plugins/UnrealMcp/Source/UnrealMcp/Private/UnrealMcpToolDispatcher.cpp:127`) |
 | `mcp_tool_result` | Legacy skill-recorder MCP result event; semantically maps to `tool_call`. | legacy | Current protocol hook (`Plugins/UnrealMcp/Source/UnrealMcp/Private/UnrealMcpProtocol.cpp:349`) |
 
-Current ActivityLog is still skill-recording-scoped. T2 should promote the
-shared writer into an always-on launch-session log rather than depending on the
-skill recording switch.
+ActivityLog now has launch/session producers beyond the original skill recorder,
+including tool and assistant-run summaries. The indexer groups bounded spans by
+session/task label only when `includeActivityLog:true`; raw full ChatHistory is
+not indexed.
 
 Verification table for literal `eventType` strings found in `UnrealMcpSkillTools.cpp`:
 
@@ -202,17 +203,13 @@ Verification table for literal `eventType` strings found in `UnrealMcpSkillTools
 (`Schemas/UnrealMcpKnowledgeCard.schema.json:48`,
 `Schemas/UnrealMcpKnowledgeCard.schema.json:50`).
 
-The current indexer emits `official-docs`, `versioned-doc`, and `tool-registry`
-only (`Plugins/UnrealMcp/Source/UnrealMcp/Private/UnrealMcpKnowledgeTools.cpp:645`,
-`Plugins/UnrealMcp/Source/UnrealMcp/Private/UnrealMcpKnowledgeTools.cpp:676`,
-`Plugins/UnrealMcp/Source/UnrealMcp/Private/UnrealMcpKnowledgeTools.cpp:756`).
-Search results already return `sourceKind` from cards
-(`Plugins/UnrealMcp/Source/UnrealMcp/Private/UnrealMcpKnowledgeTools.cpp:1376`).
-
-Recommendation for T3: keep the enum unchanged. The reserved `activity-log`,
-`runtime-memory`, and `skill` slots cover the new sources. Open question:
-whether a future `extension-outcome` value is worth adding when T3 implements
-write-back. Decision deferred to T3.
+The current indexer emits `official-docs`, `versioned-doc`, `tool-registry`,
+`skill`, and `activity-log`. Search exposes `sourceKinds`, `groupByKind`, and a
+`kindStatus` map. `runtime-memory` and `test-fixture` remain
+`reserved-not-active`; the enum remains unchanged. Verified extension outcomes
+currently remain in the `activity-log` source kind, but their card append now
+updates `cards.jsonl` and the Index v2 manifest as one verified atomic pair. A
+future dedicated `extension-outcome` enum remains an optional taxonomy change.
 
 ## 9. Per-launch session ID
 
@@ -274,16 +271,13 @@ schema in T1.
 
 ## 13. Closed-loop link to T3
 
-T3 should extend `UnrealMcpKnowledgeTools.cpp` so
-`knowledge_index_refresh` consumes `Saved/UnrealMcp/ActivityLog/*.jsonl` and
-`Tools/UnrealMcpSkills/**` files. The writer already stores cards under
-`Saved/UnrealMcp/KnowledgeIndex/cards.jsonl`
-(`Plugins/UnrealMcp/Source/UnrealMcp/Private/UnrealMcpKnowledgeTools.cpp:766`,
-`Plugins/UnrealMcp/Source/UnrealMcp/Private/UnrealMcpKnowledgeTools.cpp:1263`).
-
-Those new cards should populate the existing `activity-log` and `skill`
-`sourceKind` slots. This section is a forward link only; it does not prescribe
-code changes for T1.
+The T3 link is implemented for `Saved/UnrealMcp/ActivityLog/*.jsonl` and
+`Tools/UnrealMcpSkills/**/SKILL.md`; they populate the existing `activity-log`
+and `skill` slots. v0.35 adds Index v2 integrity/freshness state, ActivityLog
+opt-in defaults, an independent promoted-source switch, 5.7/5.8 metadata,
+source/engine diversity, rank-aware evals, and bounded manifest-safe outcome
+card persistence. Remaining closed-loop work is selected `runtime-memory`
+indexing and the optional dedicated outcome taxonomy.
 
 ## 14. Open questions
 

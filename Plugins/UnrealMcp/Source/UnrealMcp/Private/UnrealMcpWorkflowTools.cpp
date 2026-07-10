@@ -5,6 +5,7 @@
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "UnrealMcpMemoryTools.h"
+#include "UnrealMcpEngineCompat.h"
 #include "UnrealMcpToolHandlerRegistry.h"
 #include "UnrealMcpToolRegistry.h"
 
@@ -45,7 +46,7 @@ namespace UnrealMcp
 
 		void CopyOverrideField(const FJsonObject& Source, const TSharedPtr<FJsonObject>& Target, const FString& FieldName)
 		{
-			const TSharedPtr<FJsonValue>* Value = Source.Values.Find(FieldName);
+			const TSharedPtr<FJsonValue>* Value = UnrealMcp::Compat::FindJsonValue(Source, FieldName);
 			if (Value && Value->IsValid())
 			{
 				Target->SetField(FieldName, *Value);

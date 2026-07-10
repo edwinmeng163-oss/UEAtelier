@@ -4,6 +4,7 @@
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Misc/AutomationTest.h"
+#include "UnrealMcpEngineCompat.h"
 #include "UnrealMcpProtocolBuilders.h"
 
 namespace
@@ -11,7 +12,7 @@ namespace
 	TArray<FString> SortedKeys(const FJsonObject& Object)
 	{
 		TArray<FString> Keys;
-		Object.Values.GetKeys(Keys);
+		UnrealMcp::Compat::GetJsonObjectKeys(Object, Keys);
 		Keys.Sort();
 		return Keys;
 	}

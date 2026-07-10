@@ -120,7 +120,7 @@ Human output includes endpoint, connected state, editor version, tool count, and
 JSON output is normalized:
 
 ```json
-{"endpoint":"http://127.0.0.1:8765/mcp","connected":true,"editorVersion":"5.7.4","toolCount":160,"projectName":"MyProject","currentMap":"/Game/Maps/Main","isPlayInEditor":false}
+{"endpoint":"http://127.0.0.1:8765/mcp","connected":true,"editorVersion":"5.7.4","toolCount":178,"projectName":"MyProject","currentMap":"/Game/Maps/Main","isPlayInEditor":false}
 ```
 
 Project name, current map, and PIE state are omitted when editor_status is unavailable or returns isError.
@@ -317,7 +317,7 @@ It does not launch Unreal Editor, install UEAtelier, add MCP tools, modify the
 ToolRegistry, manage rollback manifests, or replace UEAtelier's native planning
 and verification loop.
 
-Not all 160 MCP tools have dedicated subcommands. Use `run` for the rest.
+Not every MCP tool has a dedicated subcommand. Use `run` for the rest.
 
 For write-capable tools, inspect the schema first:
 

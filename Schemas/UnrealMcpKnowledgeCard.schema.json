@@ -61,6 +61,10 @@
     "sourcePath": {
       "type": "string"
     },
+    "engineVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$"
+    },
     "url": {
       "type": "string"
     },
@@ -84,6 +88,16 @@
       "type": "number",
       "minimum": 0,
       "maximum": 1
+    },
+    "sourceUpdatedAt": {
+      "type": "string"
+    },
+    "indexedAt": {
+      "type": "string"
+    },
+    "contentSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
     },
     "updatedAt": {
       "type": "string"

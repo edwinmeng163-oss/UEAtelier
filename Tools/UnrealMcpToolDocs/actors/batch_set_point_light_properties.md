@@ -2,20 +2,20 @@
 
 **Category**: actors
 **Title**: Batch Set Point Lights
-**Risk level**: low
+**Risk level**: medium
 
 Configures point-light properties such as intensity, color, attenuation, and visibility on matching light actors.
 
 ## Capabilities
 
-- Requires write: false
+- Requires write: true
 - Requires build: false
 - Requires external process: false
 - Requires restart: false
 - Requires lock: false
 - Dry-run support: false
-- Preflight support: false
-- Postcheck support: false
+- Preflight support: true
+- Postcheck support: true
 - Test coverage: missing
 
 ## Input schema

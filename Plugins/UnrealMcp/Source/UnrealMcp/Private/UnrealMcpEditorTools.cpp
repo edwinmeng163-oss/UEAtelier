@@ -1528,6 +1528,12 @@ namespace UnrealMcp
 			StructuredContent->SetBoolField(TEXT("dryRun"), bDryRun);
 			StructuredContent->SetBoolField(TEXT("migrationApplied"), false);
 			StructuredContent->SetBoolField(TEXT("restartRecommended"), false);
+			const FString TargetSupportTier = TargetEngineVersion == TEXT("5.6")
+				? TEXT("maintenance")
+				: (TargetEngineVersion == TEXT("5.7") || TargetEngineVersion == TEXT("5.8"))
+					? TEXT("primary")
+					: TEXT("unverified");
+			StructuredContent->SetStringField(TEXT("targetSupportTier"), TargetSupportTier);
 
 			TArray<FString> CompatibilityWarnings;
 			TArray<FString> ManualSteps;
@@ -1543,13 +1549,19 @@ namespace UnrealMcp
 				StructuredContent->SetArrayField(TEXT("manualSteps"), EditorToolMakeJsonStringArray(ManualSteps));
 			};
 
-			if (TargetEngineVersion != TEXT("5.6") && TargetEngineVersion != TEXT("5.7"))
+			if (TargetEngineVersion != TEXT("5.6")
+				&& TargetEngineVersion != TEXT("5.7")
+				&& TargetEngineVersion != TEXT("5.8"))
 			{
 				FinalizeArrays();
 				return MakeEditorToolStructuredError(
 					TEXT("INVALID_TARGET_VERSION"),
-					TEXT("targetEngineVersion must be either \"5.6\" or \"5.7\"."),
+					TEXT("targetEngineVersion must be one of \"5.6\", \"5.7\", or \"5.8\"."),
 					StructuredContent);
+			}
+			if (TargetEngineVersion == TEXT("5.6"))
+			{
+				CompatibilityWarnings.Add(TEXT("UE 5.6 is a maintenance compatibility target in v0.35; UE 5.7 and UE 5.8 are the primary release gates."));
 			}
 
 			if (!FPaths::FileExists(ProjectFilePath))

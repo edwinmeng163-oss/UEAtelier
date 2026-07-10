@@ -4,7 +4,7 @@
 **Title**: Project Version Migration
 **Risk level**: high
 
-Updates a .uproject EngineAssociation between UE 5.6 and UE 5.7 and reports remaining manual rebuild steps.
+Updates a .uproject EngineAssociation across UE 5.6, UE 5.7, and UE 5.8, reports the support tier, and lists remaining manual rebuild steps.
 
 ## Capabilities
 
@@ -26,7 +26,12 @@ Updates a .uproject EngineAssociation between UE 5.6 and UE 5.7 and reports rema
   "properties": {
     "targetEngineVersion": {
       "type": "string",
-      "description": "Target EngineAssociation value. Supported values: 5.6 or 5.7."
+      "description": "Target EngineAssociation value. UE 5.7 and 5.8 are primary; UE 5.6 is maintenance.",
+      "enum": [
+        "5.6",
+        "5.7",
+        "5.8"
+      ]
     },
     "dryRun": {
       "type": "boolean",
@@ -51,12 +56,12 @@ _Provenance: fixture-derived_
 
 ```json
 {
-  "targetEngineVersion": "5.7",
+  "targetEngineVersion": "5.8",
   "dryRun": true
 }
 ```
 
 ## Provenance
 - Source docs: README.md#tool-coverage
-- Reason: v0.15 chunk 5 migration tool: reversible .uproject EngineAssociation edit between UE 5.6 and UE 5.7.
-- Notes: PIE-blocked. Default dryRun=true. Does not cook, regenerate project files, run UnrealVersionSelector, or rebuild binaries.
+- Reason: v0.35 support-contract update: reversible .uproject EngineAssociation edits for primary UE 5.7/5.8 and maintenance UE 5.6.
+- Notes: PIE-blocked. Default dryRun=true. Returns targetSupportTier=primary for UE 5.7/5.8 and maintenance for UE 5.6. Does not cook, regenerate project files, run UnrealVersionSelector, or rebuild binaries.

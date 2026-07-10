@@ -6,6 +6,7 @@
 #include "HAL/FileManager.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "UnrealMcpEngineCompat.h"
 #include "UnrealMcpSharedPathResolver.h"
 
 namespace UnrealMcp
@@ -749,7 +750,7 @@ namespace UnrealMcp
 				TArray<FString> Keys;
 				if (Object.IsValid())
 				{
-					Object->Values.GetKeys(Keys);
+					UnrealMcp::Compat::GetJsonObjectKeys(*Object, Keys);
 					Keys.Sort();
 				}
 				return Keys;

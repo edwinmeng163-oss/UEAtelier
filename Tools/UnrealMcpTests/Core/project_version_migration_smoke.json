@@ -1,10 +1,14 @@
 {
   "name": "project_version_migration_smoke",
-  "description": "List-only smoke for previewing a .uproject EngineAssociation change. The write call is not executed in CI.",
-  "category": "manual_smoke",
+  "description": "Dry-run smoke for previewing a primary UE 5.8 EngineAssociation change without writing the project file.",
+  "category": "happy_path",
   "expectToolListed": true,
-  "executeTool": false,
+  "executeTool": true,
   "expectToolCallError": false,
+  "expectToolCallStructuredFields": {
+    "targetSupportTier": "primary",
+    "dryRun": true
+  },
   "request": {
     "jsonrpc": "2.0",
     "id": 140,
@@ -12,7 +16,7 @@
     "params": {
       "name": "unreal.project_version_migration",
       "arguments": {
-        "targetEngineVersion": "5.7",
+        "targetEngineVersion": "5.8",
         "dryRun": true
       }
     }

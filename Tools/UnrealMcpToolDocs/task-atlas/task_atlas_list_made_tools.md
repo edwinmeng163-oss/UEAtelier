@@ -23,22 +23,25 @@ List Task Atlas generated user composites for CLI diagnostics and Made Tools vie
 ```json
 {
   "type": "object",
-  "additionalProperties": false,
   "properties": {
     "includeStale": {
       "type": "boolean",
-      "default": true
+      "default": true,
+      "description": "Include generated dirs that are not currently loaded in the user registry."
     },
     "includeFailureMarkers": {
       "type": "boolean",
-      "default": true
+      "default": true,
+      "description": "Include generated_smoke_failed and MakeToolSetFailures diagnostic links when present."
     },
     "sourceTaskId": {
       "type": "string",
-      "default": ""
+      "default": "",
+      "description": "Optional exact task id filter. Empty means no filter."
     }
   },
-  "required": []
+  "required": [],
+  "additionalProperties": false
 }
 ```
 
@@ -51,7 +54,6 @@ _Provenance: schema-minimal_
 ```
 
 ## Provenance
-
 - Source docs: Docs/TaskAtlas.md
 - Reason: v0.31 read-only Task Atlas generated composite listing wrapper.
-- Notes: AssistantRun approval is not required. This tool only lists registry and generated-dir metadata.
+- Notes: AssistantRun approval: not_required. Read-only registry and generated-dir metadata listing.

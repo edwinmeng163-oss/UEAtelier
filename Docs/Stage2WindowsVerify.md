@@ -1,3 +1,10 @@
+> **Historical pilot only:** This document records the v0.12 Windows
+> full-experience verification procedure. It is not the v0.35 source-release
+> SOP. For v0.35, extract the `ue57-ue58-projectroot` artifact at the project
+> root and follow `Docs/agents-guide/packaging.md` plus
+> `Docs/WindowsPackaging.md`; the Windows source zip is produced by
+> `.github/workflows/win-release-package.yml`.
+
 ROLE: Stage 2 — end-to-end Windows verification of the v0.12.0-pilot package. The Windows machine currently has only Unreal Engine installed; it does NOT have the UnrealMcp plugin, the UEAtelier repo, or any prior build artifacts. This prompt walks you through:
 
 1. cloning the repo,

@@ -106,7 +106,9 @@ class TextExtractor(HTMLParser):
             return
         if tag == "title":
             self._in_title = True
-        if tag in self.BLOCK_TAGS:
+        if re.fullmatch(r"h[1-6]", tag):
+            self.parts.append("\n" + "#" * int(tag[1]) + " ")
+        elif tag in self.BLOCK_TAGS:
             self.parts.append("\n")
         if tag == "a":
             attrs_dict = dict(attrs)
@@ -177,6 +179,38 @@ def load_seed_file(path: Path) -> tuple[dict, list[Source]]:
     return data, sources
 
 
+def resolve_application_version(seed: dict, sources: list[Source], override: str | None) -> str:
+    seed_version = str(seed.get("engineVersion") or "").strip()
+    override_version = str(override or "").strip()
+    if not seed_version and not override_version:
+        raise ValueError("Seed must declare engineVersion or --application-version must be provided.")
+
+    effective_version = override_version or seed_version
+    if not override_version:
+        for source in sources:
+            query = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(source.url).query))
+            source_version = str(query.get("application_version") or "").strip()
+            if source_version and source_version != seed_version:
+                raise ValueError(
+                    f"Seed engineVersion {seed_version!r} does not match {source.id} URL version {source_version!r}."
+                )
+    return effective_version
+
+
+def resolve_output_dir(seed: dict, application_version: str, explicit_output_dir: str | None) -> Path:
+    if explicit_output_dir:
+        return Path(explicit_output_dir)
+
+    default_output = Path(
+        seed.get("defaultOutputDir")
+        or f"Saved/UnrealMcp/KnowledgeSources/UnrealEngineOfficialDocs/{application_version}"
+    )
+    seed_version = str(seed.get("engineVersion") or "").strip()
+    if seed_version and seed_version != application_version and default_output.name == seed_version:
+        return default_output.with_name(application_version)
+    return default_output
+
+
 def canonicalize_url(url: str, base_url: str | None = None, application_version: str | None = None) -> str | None:
     absolute = urllib.parse.urljoin(base_url or "", url)
     parsed = urllib.parse.urlparse(absolute)
@@ -188,7 +222,7 @@ def canonicalize_url(url: str, base_url: str | None = None, application_version:
         return None
 
     query = dict(urllib.parse.parse_qsl(parsed.query, keep_blank_values=False))
-    if application_version and "application_version" not in query:
+    if application_version:
         query["application_version"] = application_version
     normalized_query = urllib.parse.urlencode(sorted(query.items()))
     normalized = parsed._replace(fragment="", query=normalized_query)
@@ -295,7 +329,11 @@ def main() -> int:
     parser.add_argument("--output-dir", default=None, help="Output directory. Defaults to seed defaultOutputDir.")
     parser.add_argument("--max-pages", type=int, default=12, help="Maximum pages to fetch.")
     parser.add_argument("--include-linked", action="store_true", help="Also enqueue in-scope links discovered on fetched pages.")
-    parser.add_argument("--application-version", default="5.7", help="application_version query parameter to add to discovered links.")
+    parser.add_argument(
+        "--application-version",
+        default=None,
+        help="Override the seed engineVersion and replace application_version on all fetched URLs.",
+    )
     parser.add_argument("--delay-seconds", type=float, default=DEFAULT_DELAY_SECONDS, help="Delay between requests.")
     parser.add_argument("--timeout-seconds", type=int, default=DEFAULT_TIMEOUT_SECONDS, help="HTTP timeout.")
     parser.add_argument("--user-agent", default=DEFAULT_USER_AGENT, help="HTTP User-Agent.")
@@ -310,7 +348,12 @@ def main() -> int:
         seed_path = repo_root / seed_path
     seed, initial_sources = load_seed_file(seed_path)
 
-    output_dir = Path(args.output_dir or seed.get("defaultOutputDir") or "Saved/UnrealMcp/KnowledgeSources/UnrealEngineOfficialDocs/5.7")
+    try:
+        application_version = resolve_application_version(seed, initial_sources, args.application_version)
+    except ValueError as exc:
+        fail(str(exc))
+
+    output_dir = resolve_output_dir(seed, application_version, args.output_dir)
     if not output_dir.is_absolute():
         output_dir = repo_root / output_dir
 
@@ -321,16 +364,17 @@ def main() -> int:
 
     print(f"Seed: {seed_path}")
     print(f"Output: {output_dir}")
+    print(f"Engine version: {application_version}")
     print(f"Max pages: {args.max_pages}")
 
     if args.dry_run:
         for source in queue[: args.max_pages]:
-            print(f"DRY RUN: {source.id}: {source.url}")
+            print(f"DRY RUN: {source.id}: {canonicalize_url(source.url, application_version=application_version)}")
         return 0
 
     while queue and len(fetched_rows) < args.max_pages:
         source = queue.pop(0)
-        canonical_url = canonicalize_url(source.url, application_version=args.application_version)
+        canonical_url = canonicalize_url(source.url, application_version=application_version)
         if not canonical_url or canonical_url in seen_urls:
             continue
         seen_urls.add(canonical_url)
@@ -350,6 +394,7 @@ def main() -> int:
                 "url": canonical_url,
                 "category": source.category,
                 "tags": source.tags,
+                "engineVersion": application_version,
                 "textPath": str(text_path.relative_to(output_dir)),
                 "metadataPath": str(meta_path.relative_to(output_dir)),
                 "charCount": len(text),
@@ -365,7 +410,7 @@ def main() -> int:
                 canonical_url,
                 args.timeout_seconds,
                 args.user_agent,
-                args.application_version,
+                application_version,
             )
             extractor = TextExtractor()
             extractor.feed(decoded)
@@ -390,6 +435,7 @@ def main() -> int:
                 "finalUrl": final_url,
                 "category": source.category,
                 "tags": source.tags,
+                "engineVersion": application_version,
                 "parentId": source.parent_id,
                 "status": status,
                 "bytes": len(body),
@@ -410,6 +456,7 @@ def main() -> int:
                 "url": canonical_url,
                 "category": source.category,
                 "tags": source.tags,
+                "engineVersion": application_version,
                 "textPath": str(text_path.relative_to(output_dir)),
                 "metadataPath": str(meta_path.relative_to(output_dir)),
                 "charCount": len(text),
@@ -427,7 +474,7 @@ def main() -> int:
             if args.include_linked:
                 link_count = 0
                 for raw_link in [*extractor.links, *discovered_links]:
-                    linked_url = canonicalize_url(raw_link, base_url=final_url, application_version=args.application_version)
+                    linked_url = canonicalize_url(raw_link, base_url=final_url, application_version=application_version)
                     if not linked_url or linked_url in seen_urls:
                         continue
                     link_count += 1
@@ -441,6 +488,7 @@ def main() -> int:
                 "url": canonical_url,
                 "category": source.category,
                 "tags": source.tags,
+                "engineVersion": application_version,
                 "error": str(exc),
                 "fetchedAt": utc_now(),
             }
@@ -457,7 +505,8 @@ def main() -> int:
         "createdAt": utc_now(),
         "maxPages": args.max_pages,
         "includeLinked": args.include_linked,
-        "applicationVersion": args.application_version,
+        "engineVersion": application_version,
+        "applicationVersion": application_version,
         "fetchedCount": len(fetched_rows),
         "entryCount": len(manifest_entries),
         "licenseNotice": seed.get("licenseNotice", ""),

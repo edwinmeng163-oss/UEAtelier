@@ -1,36 +1,39 @@
 # Unreal MCP Projectroot Install
 
-## Source-Only Projectroot Zip (UE 5.6 / 5.7)
+## Source-Only Projectroot Zip (v0.35 development: UE 5.7 / 5.8)
 
 ### English
 
-Use this mode for `UnrealMcp-v0.32.2-mac-ue56-ue57-projectroot.zip` or `UnrealMcp-v0.32.2-win-ue56-ue57-projectroot.zip`.
+Use this mode for the v0.35 development candidates `UnrealMcp-v0.35.0-mac-ue57-ue58-projectroot.zip` and `UnrealMcp-v0.35.0-win-ue57-ue58-projectroot.zip`.
 Extract the source-only projectroot zip into your Unreal project root, next to `<YourProject>.uproject`; do not extract it under `Plugins/`.
 It creates `Plugins/UnrealMcp/` (including `Plugins/UnrealMcp/INSTALL.md`), project-level `Tools/`, and `Docs/FIRST_LAUNCH.md`.
 The package does not include prebuilt plugin binaries; Unreal Build Tool compiles UnrealMcp on first editor launch or explicit editor-target build.
 For the 5-step first launch flow, read `Docs/FIRST_LAUNCH.md` after extraction.
+UE 5.7 and UE 5.8 are the primary v0.35 targets. UE 5.6 remains a maintenance compatibility target and is intentionally absent from the candidate filename.
 
 ### 中文
 
-此模式适用于 `UnrealMcp-v0.32.2-mac-ue56-ue57-projectroot.zip` 或 `UnrealMcp-v0.32.2-win-ue56-ue57-projectroot.zip`。
+此模式适用于 v0.35 开发候选包 `UnrealMcp-v0.35.0-mac-ue57-ue58-projectroot.zip` 和 `UnrealMcp-v0.35.0-win-ue57-ue58-projectroot.zip`。
 请把 source-only projectroot zip 解压到 Unreal 项目根目录，也就是 `<YourProject>.uproject` 旁边；不要解压到 `Plugins/` 目录下。
 它会创建 `Plugins/UnrealMcp/`（包含 `Plugins/UnrealMcp/INSTALL.md`）、项目级 `Tools/` 和 `Docs/FIRST_LAUNCH.md`。
 包内不包含预构建插件二进制；Unreal Build Tool 会在首次启动编辑器或显式构建 editor target 时编译 UnrealMcp。
 解压后，请阅读 `Docs/FIRST_LAUNCH.md` 中的 5 步首次启动流程。
+UE 5.7 和 UE 5.8 是 v0.35 的主要目标。UE 5.6 仅保留为维护兼容目标，因此不会出现在候选包文件名中。
 
 ### 日本語
 
-この方式は `UnrealMcp-v0.32.2-mac-ue56-ue57-projectroot.zip` または `UnrealMcp-v0.32.2-win-ue56-ue57-projectroot.zip` 用です。
+この方式は v0.35 開発候補の `UnrealMcp-v0.35.0-mac-ue57-ue58-projectroot.zip` と `UnrealMcp-v0.35.0-win-ue57-ue58-projectroot.zip` 用です。
 source-only projectroot zip は `<YourProject>.uproject` と同じ Unreal プロジェクトルートへ展開してください。`Plugins/` の下へは展開しません。
 展開すると `Plugins/UnrealMcp/`（`Plugins/UnrealMcp/INSTALL.md` を含む）、プロジェクトレベルの `Tools/`、`Docs/FIRST_LAUNCH.md` が作られます。
 このパッケージに事前ビルド済みのプラグインバイナリは含まれません。Unreal Build Tool が初回エディタ起動時、または editor target の明示的なビルド時に UnrealMcp をコンパイルします。
 展開後、初回起動の 5 ステップは `Docs/FIRST_LAUNCH.md` を参照してください。
+UE 5.7 と UE 5.8 が v0.35 の主要ターゲットです。UE 5.6 は保守互換ターゲットとして残るため、候補パッケージ名には含めません。
 
 ## English
 
 ### Prerequisites
 
-- Unreal Editor 5.6 or 5.7 on macOS or Windows.
+- Unreal Editor 5.7 or 5.8 on macOS or Windows for the primary v0.35 path. UE 5.6 is maintenance-only.
 - macOS: Xcode 26.x, or another Xcode version compatible with your Unreal install.
 - Windows: Visual Studio 2022 with the "Game Development with C++" workload, Windows 10/11 SDK, and .NET 6.0+ SDK.
 - The built-in `PythonScriptPlugin` enabled in the project. Unreal Engine 5.x ships with this plugin.
@@ -49,6 +52,8 @@ engine install. It creates:
 <UserProject>/Tools/UnrealMcpToolScaffoldStarters/
 <UserProject>/Tools/UnrealMcpToolScaffolds/
 <UserProject>/Tools/UnrealMcpToolRegistry/
+<UserProject>/Tools/unreal_mcp_fetch_docs.py
+<UserProject>/Tools/install_unrealmcp_to_project.py
 <UserProject>/Tools/UnrealMcpSkills/
 <UserProject>/Tools/UnrealMcpKnowledge/
 <UserProject>/Tools/UnrealMcpTests/
@@ -116,11 +121,13 @@ On first editor launch, Unreal Build Tool compiles the plugin against your local
 
 ### Current Package Scope
 
-v0.32.2 packages are source-only projectroot overlays for macOS and Windows, validated for UE 5.6 and UE 5.7. The registry has 190 registered MCP tools; AI-facing `tools/list` shows 178 visible tools. UE 5.8 support remains deferred. Linux is not a published package target.
+The v0.35.0 `ue57-ue58` files described here are development-candidate source-only projectroot overlays for macOS and Windows. UE 5.7 and UE 5.8 are the primary targets; UE 5.6 remains a maintenance compile canary. The registry has 190 registered MCP tools; AI-facing `tools/list` shows 178 visible tools. Linux is not a published package target.
+
+This document does not announce a v0.35 public release. The latest public release remains v0.34.0. Before UE 5.8 is described as publicly supported, the candidate must pass real UE 5.8 UBT plus strict zip integrity, fresh-project install, endpoint smoke, and MCP SDK conformance. Windows UBT cells for both UE 5.7 and UE 5.8 are also required; the package-only GitHub workflow is artifact-shape evidence, not engine-compatibility evidence. See `Docs/Development-0.35.md` for the complete remaining release gates.
 
 ### Help
 
-For deeper documentation, start with `Docs/Release-2026-06c.md`, follow the v0.32.1 and v0.32.0 links there, and read `Plugins/UnrealMcp/README.md` in the repository. Report bugs at `https://github.com/edwinmeng163-oss/UEAtelier/issues`.
+For the development contract, start with `Docs/Development-0.35.md`. For the latest public-release record, read `Docs/Release-2026-07.md`, then `Plugins/UnrealMcp/README.md`. Historical release notes remain under `Docs/Release-*.md`. Report bugs at `https://github.com/edwinmeng163-oss/UEAtelier/issues`.
 
 ### Verify The Package
 
@@ -129,14 +136,14 @@ Run the matching check next to the zip and sidecar file.
 Mac package:
 
 ```bash
-shasum -a 256 -c UnrealMcp-v0.32.2-mac-ue56-ue57-projectroot.zip.sha256
+shasum -a 256 -c UnrealMcp-v0.35.0-mac-ue57-ue58-projectroot.zip.sha256
 ```
 
 Windows CI package:
 
 ```powershell
-Get-FileHash -Algorithm SHA256 UnrealMcp-v0.32.2-win-ue56-ue57-projectroot.zip
-Get-Content UnrealMcp-v0.32.2-win-ue56-ue57-projectroot.zip.sha256
+Get-FileHash -Algorithm SHA256 UnrealMcp-v0.35.0-win-ue57-ue58-projectroot.zip
+Get-Content UnrealMcp-v0.35.0-win-ue57-ue58-projectroot.zip.sha256
 ```
 
 Compare the `Get-FileHash` value with the hash in the `.sha256` sidecar.
@@ -145,7 +152,7 @@ Compare the `Get-FileHash` value with the hash in the `.sha256` sidecar.
 
 ### 前提条件
 
-- macOS 或 Windows 上的 Unreal Editor 5.6 或 5.7。
+- v0.35 主要路径需要 macOS 或 Windows 上的 Unreal Editor 5.7 或 5.8。UE 5.6 仅为维护目标。
 - macOS：Xcode 26.x，或与你的 Unreal 安装兼容的其他 Xcode 版本。
 - Windows：Visual Studio 2022，并安装 "Game Development with C++" 工作负载、Windows 10/11 SDK 和 .NET 6.0+ SDK。
 - 项目中启用内置的 `PythonScriptPlugin`。Unreal Engine 5.x 自带这个插件。
@@ -221,11 +228,13 @@ Windows PowerShell：
 
 ### 当前包范围
 
-v0.32.2 包是面向 macOS 和 Windows 的 source-only projectroot overlay，并已针对 UE 5.6 与 UE 5.7 验证。registry 中有 190 个已注册 MCP tools；AI-facing `tools/list` 显示 178 个 visible tools。UE 5.8 支持仍然 deferred。Linux 不是已发布的包目标。
+这里描述的 v0.35.0 `ue57-ue58` 文件是面向 macOS 和 Windows 的开发候选 source-only projectroot overlay。UE 5.7 与 UE 5.8 是主要目标；UE 5.6 仅保留为维护编译 canary。registry 中有 190 个已注册 MCP tools；AI-facing `tools/list` 显示 178 个 visible tools。Linux 不是已发布的包目标。
+
+本文档不代表 v0.35 已公开发布；最新公开版本仍是 v0.34.0。在公开宣称支持 UE 5.8 前，候选包必须通过真实 UE 5.8 UBT、严格 zip 完整性检查、全新项目安装、endpoint smoke 和 MCP SDK conformance。Windows 上 UE 5.7 与 UE 5.8 的 UBT cell 也必须通过；仅打包的 GitHub workflow 只能证明 artifact shape，不能证明引擎兼容性。完整剩余发布门请参阅 `Docs/Development-0.35.md`。
 
 ### 获取帮助
 
-更深入的文档请先阅读仓库中的 `Docs/Release-2026-06c.md`，再沿其中链接查看 v0.32.1 与 v0.32.0 notes，并阅读 `Plugins/UnrealMcp/README.md`。Bug 请在 `https://github.com/edwinmeng163-oss/UEAtelier/issues` 报告。
+开发契约请先阅读 `Docs/Development-0.35.md`。最新公开发布记录见 `Docs/Release-2026-07.md`，然后阅读 `Plugins/UnrealMcp/README.md`；历史发布记录仍保存在 `Docs/Release-*.md`。Bug 请在 `https://github.com/edwinmeng163-oss/UEAtelier/issues` 报告。
 
 ### 验证包
 
@@ -234,14 +243,14 @@ v0.32.2 包是面向 macOS 和 Windows 的 source-only projectroot overlay，并
 Mac 包：
 
 ```bash
-shasum -a 256 -c UnrealMcp-v0.32.2-mac-ue56-ue57-projectroot.zip.sha256
+shasum -a 256 -c UnrealMcp-v0.35.0-mac-ue57-ue58-projectroot.zip.sha256
 ```
 
 Windows CI 包：
 
 ```powershell
-Get-FileHash -Algorithm SHA256 UnrealMcp-v0.32.2-win-ue56-ue57-projectroot.zip
-Get-Content UnrealMcp-v0.32.2-win-ue56-ue57-projectroot.zip.sha256
+Get-FileHash -Algorithm SHA256 UnrealMcp-v0.35.0-win-ue57-ue58-projectroot.zip
+Get-Content UnrealMcp-v0.35.0-win-ue57-ue58-projectroot.zip.sha256
 ```
 
 将 `Get-FileHash` 的值与 `.sha256` sidecar 中的 hash 对比。
@@ -250,7 +259,7 @@ Get-Content UnrealMcp-v0.32.2-win-ue56-ue57-projectroot.zip.sha256
 
 ### 前提条件
 
-- macOS または Windows 上の Unreal Editor 5.6 または 5.7。
+- v0.35 の主要経路では、macOS または Windows 上の Unreal Editor 5.7 または 5.8 が必要です。UE 5.6 は保守専用です。
 - macOS: Xcode 26.x、または利用中の Unreal インストールと互換性のある Xcode。
 - Windows: Visual Studio 2022 に "Game Development with C++" ワークロード、Windows 10/11 SDK、.NET 6.0+ SDK をインストールしてください。
 - プロジェクトで組み込みの `PythonScriptPlugin` を有効にしてください。Unreal Engine 5.x にはこのプラグインが同梱されています。
@@ -326,11 +335,13 @@ Windows PowerShell:
 
 ### 現在のパッケージ範囲
 
-v0.32.2 パッケージは macOS と Windows 向けの source-only projectroot overlay で、UE 5.6 と UE 5.7 で検証されています。registry には 190 個の registered MCP tools があり、AI-facing `tools/list` には 178 個の visible tools が表示されます。UE 5.8 サポートは引き続き deferred です。Linux は公開パッケージ対象ではありません。
+ここで説明する v0.35.0 `ue57-ue58` ファイルは、macOS と Windows 向けの開発候補 source-only projectroot overlay です。UE 5.7 と UE 5.8 が主要ターゲットで、UE 5.6 は保守コンパイル canary として残ります。registry には 190 個の registered MCP tools があり、AI-facing `tools/list` には 178 個の visible tools が表示されます。Linux は公開パッケージ対象ではありません。
+
+この文書は v0.35 の公開リリースを告知するものではありません。最新の公開リリースは引き続き v0.34.0 です。UE 5.8 を公開サポートと記載する前に、候補パッケージは実際の UE 5.8 UBT、厳密な zip 整合性確認、新規プロジェクトへのインストール、endpoint smoke、MCP SDK conformance を通過する必要があります。Windows の UE 5.7 と UE 5.8 の UBT cell も必須であり、パッケージ作成のみを行う GitHub workflow は artifact shape の証拠であって、エンジン互換性の証拠ではありません。残りの全リリースゲートは `Docs/Development-0.35.md` を参照してください。
 
 ### ヘルプ
 
-詳しいドキュメントは、リポジトリ内の `Docs/Release-2026-06c.md` から始め、そこから v0.32.1 と v0.32.0 の notes をたどり、`Plugins/UnrealMcp/README.md` も参照してください。バグは `https://github.com/edwinmeng163-oss/UEAtelier/issues` で報告してください。
+開発契約は `Docs/Development-0.35.md` から確認してください。最新の公開リリース記録は `Docs/Release-2026-07.md`、続いて `Plugins/UnrealMcp/README.md` を参照してください。過去のリリース記録は `Docs/Release-*.md` に残っています。バグは `https://github.com/edwinmeng163-oss/UEAtelier/issues` で報告してください。
 
 ### パッケージの検証
 
@@ -339,14 +350,14 @@ zip と sidecar ファイルの横で、該当する確認を実行してくだ�
 Mac パッケージ:
 
 ```bash
-shasum -a 256 -c UnrealMcp-v0.32.2-mac-ue56-ue57-projectroot.zip.sha256
+shasum -a 256 -c UnrealMcp-v0.35.0-mac-ue57-ue58-projectroot.zip.sha256
 ```
 
 Windows CI パッケージ:
 
 ```powershell
-Get-FileHash -Algorithm SHA256 UnrealMcp-v0.32.2-win-ue56-ue57-projectroot.zip
-Get-Content UnrealMcp-v0.32.2-win-ue56-ue57-projectroot.zip.sha256
+Get-FileHash -Algorithm SHA256 UnrealMcp-v0.35.0-win-ue57-ue58-projectroot.zip
+Get-Content UnrealMcp-v0.35.0-win-ue57-ue58-projectroot.zip.sha256
 ```
 
 `Get-FileHash` の値を `.sha256` sidecar 内の hash と比較してください。

@@ -2,20 +2,20 @@
 
 **Category**: actors
 **Title**: Configure Static Mesh Actors
-**Risk level**: low
+**Risk level**: medium
 
 Applies static mesh component settings to a batch of actors, such as mesh, material, mobility, collision, and visibility fields when supplied.
 
 ## Capabilities
 
-- Requires write: false
+- Requires write: true
 - Requires build: false
 - Requires external process: false
 - Requires restart: false
 - Requires lock: false
 - Dry-run support: false
-- Preflight support: false
-- Postcheck support: false
+- Preflight support: true
+- Postcheck support: true
 - Test coverage: missing
 
 ## Input schema

@@ -23,24 +23,27 @@ Promote a Task Atlas task or draft into a RAG knowledge source and refresh the k
 ```json
 {
   "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "taskId"
-  ],
   "properties": {
     "taskId": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "description": "Task Atlas task id to promote."
     },
     "dryRun": {
       "type": "boolean",
-      "default": false
+      "default": false,
+      "description": "When true, report source/target paths and refresh plan without writing KnowledgeSources."
     },
     "refreshIndex": {
       "type": "boolean",
-      "default": true
+      "default": true,
+      "description": "Run knowledge_index_refresh after writing the source."
     }
-  }
+  },
+  "required": [
+    "taskId"
+  ],
+  "additionalProperties": false
 }
 ```
 
@@ -50,13 +53,11 @@ _Provenance: schema-minimal_
 
 ```json
 {
-  "taskId": "task-20260601",
-  "dryRun": true
+  "taskId": "<string>"
 }
 ```
 
 ## Provenance
-
 - Source docs: Docs/TaskAtlas.md
 - Reason: v0.31 Task Atlas RAG promotion wrapper over TaskAtlasService::PromoteToRag.
-- Notes: AssistantRun approval is required for dryRun=false because this writes long-lived KnowledgeSources.
+- Notes: AssistantRun approval: required for dryRun=false because this writes long-lived KnowledgeSources. refreshIndex=false real writes are refused by the wrapper until service support exists.

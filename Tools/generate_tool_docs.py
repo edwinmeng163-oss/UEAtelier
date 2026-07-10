@@ -18,10 +18,12 @@ REGISTRY = ROOT / "Tools" / "UnrealMcpToolRegistry" / "tools.json"
 JSON_FIXTURES = ROOT / "Tools" / "UnrealMcpTests"
 CPP_FIXTURES = ROOT / "Plugins" / "UnrealMcp" / "Source" / "UnrealMcp" / "Private" / "Tests"
 OUT = ROOT / "Tools" / "UnrealMcpToolDocs"
+EXPECTED_TOOL_COUNT = 190
 
 CATEGORIES = [
     "actors",
     "blueprint",
+    "code",
     "editor",
     "material",
     "memory",
@@ -370,8 +372,8 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
 
     tools = load_tools()
-    if len(tools) != 160:
-        raise ValueError(f"Expected 160 registry tools, found {len(tools)}")
+    if len(tools) != EXPECTED_TOOL_COUNT:
+        raise ValueError(f"Expected {EXPECTED_TOOL_COUNT} registry tools, found {len(tools)}")
     files, provenance_counts, _category_counts = expected_files(tools)
 
     if args.check:

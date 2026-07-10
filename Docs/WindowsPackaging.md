@@ -2,13 +2,25 @@
 
 > **Update (post-v0.22.0)**: The Windows source-only zip is now produced automatically by `.github/workflows/win-release-package.yml` on every `v*.*.*` tag push, then attached to the matching GitHub release via `gh release upload --clobber`. **No manual Windows packaging is required for new tags going forward.** The workflow runs on a `windows-2022` GitHub Actions runner so the zip retains `Compress-Archive`'s backslash entry paths (the canonical Windows-tested artifact shape). If the GitHub Actions run fails for any reason, the steps in this guide are the manual fallback.
 >
+> **Pre-tag candidate mode (v0.35+)**: manually dispatch the workflow against the candidate branch with the `tag` input left empty. It packages the event's exact commit and uploads `UnrealMcp-v<VersionName>-win-zip` as a 30-day Actions artifact, but does not create or modify a GitHub release. Supplying a tag keeps the historical release/backfill behavior and now fails closed if the tag version differs from `UnrealMcp.uplugin`.
+>
 > **⚠️ Timing-race caveat (seen on v0.26.0)**: the attach step is **best-effort** — it does `gh release view <tag>` and skips upload if the release doesn't exist yet. Tag-push triggers CI **immediately**, but PM usually creates the GitHub release ~1 minute later (after the Mac zip builds). So the CI attach almost always loses the race: the Win zip lands only as a **30-day workflow artifact**, NOT on the release. **PM must back-fill it** — see § 3.2 below. Two ways to avoid the race next time: (a) `gh release create <tag>` **before** `git push origin <tag>` so the release exists when CI checks, or (b) re-run the workflow via `workflow_dispatch` (with the `tag` input) after the release exists.
 >
-> The guide below stays canonical for: (1) the manual fallback if the workflow fails, (2) back-filling Windows zips on tags that pre-date the workflow (or that lost the timing race), and (3) the rare full-experience zip with prebuilt Win64 binaries (not produced by the workflow).
+> The guide below stays canonical for: (1) the current-source manual fallback
+> if the workflow fails, (2) back-filling a CI artifact after a timing race,
+> and (3) the rare full-experience zip with prebuilt Win64 binaries. Manual
+> packaging of an older tag must use that tag's own engine suffix and script;
+> the workflow discovers that historical suffix automatically.
 
 This guide tells a Windows collaborator how to produce a `UnrealMcp-vX.Y.Z-win-*.zip` and attach it to an existing GitHub release. PM does the Mac zip and creates the release; this side packages the Windows companion.
 
-> Audience: a Windows machine that has UE 5.6 and/or UE 5.7 installed, with the UEAtelier repository cloned.
+> **v0.35 support contract:** UE 5.7 and UE 5.8 are the primary targets and
+> share `Examples/UEvolveExample57` as their build host. UE 5.6 is a
+> maintenance compatibility canary. The current source artifact is named
+> `UnrealMcp-vX.Y.Z-win-ue57-ue58-projectroot.zip`.
+
+> Audience: a Windows machine with UE 5.7 and UE 5.8 installed for primary
+> release verification, with the UEAtelier repository cloned.
 
 ---
 
@@ -18,7 +30,7 @@ This guide tells a Windows collaborator how to produce a `UnrealMcp-vX.Y.Z-win-*
 
 | Tool | Version | Why |
 |------|---------|-----|
-| Unreal Engine | 5.6 and/or 5.7 (latest patch) | Build the plugin binaries |
+| Unreal Engine | 5.7 and 5.8 (latest patches); 5.6 optional maintenance canary | Build the plugin binaries |
 | Visual Studio | 2022 with "Game development with C++" workload | UBT toolchain |
 | Git for Windows | Latest | Clone + fetch tags |
 | PowerShell | 7+ (`pwsh`) — Windows PowerShell 5.1 also works | Run the packaging script |
@@ -43,7 +55,7 @@ gh release list --repo edwinmeng163-oss/UEAtelier --limit 5
 
 ```powershell
 cd C:\src        # or wherever you keep code
-git clone https://github.com/edwinmeng163-oss/UEvolve.git
+git clone https://github.com/edwinmeng163-oss/UEAtelier.git
 cd UEAtelier
 ```
 
@@ -59,13 +71,13 @@ For each version that needs a Win zip, repeat sections 2.1 → 2.5.
 
 ```powershell
 git fetch --tags origin
-git checkout v0.19.0          # replace with the version you're packaging
+git checkout v0.35.0          # replace with the version you're packaging
 ```
 
 Verify:
 
 ```powershell
-# Should print "0.19.0"
+# Should print "0.35.0"
 Select-String -Path Plugins\UnrealMcp\UnrealMcp.uplugin -Pattern '"VersionName"'
 ```
 
@@ -82,7 +94,8 @@ This prevents an older dylib from shadowing fresh UBT output (the Mac side has h
 
 ### 2.3 Build the plugin against the example host
 
-Use the example host that matches the engine you have installed. Replace `UE_5.7` with `UE_5.6` if you're packaging the UE 5.6 build.
+For v0.35, build the shared example host with both primary engines. Start with
+UE 5.7:
 
 ```powershell
 & "C:\Program Files\Epic Games\UE_5.7\Engine\Build\BatchFiles\Build.bat" `
@@ -93,7 +106,10 @@ Use the example host that matches the engine you have installed. Replace `UE_5.7
     -WaitMutex
 ```
 
-Expected: `Build successful` at the end. Time: 3-10 minutes the first build, ~30s incremental.
+Then remove the host/plugin binaries and intermediates as in § 2.2 and repeat
+the command with the UE 5.8 `Build.bat` path. Both builds must end with
+`Build successful`. A UE 5.6 build is an optional maintenance canary, not a
+substitute for either primary build.
 
 **Important:** the build target is `MyProjectEditor`, NOT `UEvolveExample57Editor`. The folder name is `UEvolveExample57` but the internal module + target name is `MyProject*` (this trips up first-time packagers).
 
@@ -114,7 +130,7 @@ python Tools\check_ue56_compat.py
 ```
 
 Expected output:
-- `validate_tool_registry.py` ends with `issueCount: 0` and `toolCount: <NNN>` matching the version (e.g. 149 for v0.16.0, 154 for v0.17.0/v0.18.0, 155 for v0.19.0)
+- `validate_tool_registry.py` ends with `issueCount: 0` and `toolCount: <NNN>` matching the version (190 for v0.35.0)
 - `check_ue56_compat.py` ends with `0 errors, 0 warnings`
 
 If either fails, **stop** and report back — the tag should have been clean.
@@ -128,12 +144,12 @@ There are two flavors:
 This matches the current Mac zip — pure source, the Win user builds locally on first launch. **This is what we ship now.**
 
 ```powershell
-pwsh -File Tools\package_plugin.ps1 -Version 0.19.1
+pwsh -File Tools\package_plugin.ps1 -Version 0.35.0
 ```
 
 Output:
 ```
-Zip path: Saved\UnrealMcp\Packages\UnrealMcp-v0.19.1-win-ue56-ue57-projectroot.zip
+Zip path: Saved\UnrealMcp\Packages\UnrealMcp-v0.35.0-win-ue57-ue58-projectroot.zip
 Zip size: ~1 MiB
 SHA-256: <hash>
 ```
@@ -148,19 +164,20 @@ This bundles the freshly built `UnrealEditor-UnrealMcp.dll` so end-users don't n
 
 ```powershell
 pwsh -File Tools\package_plugin.ps1 `
-    -Version 0.19.0 `
+    -Version 0.35.0 `
     -FullExperience `
     -PrebuiltBinariesPath (Resolve-Path .\Examples\UEvolveExample57) `
     -EngineTag ue57
 ```
 
-For UE 5.6 binaries, change `-EngineTag ue56` and use a UE 5.6 build.
+For UE 5.8 binaries, change `-EngineTag ue58` and use a UE 5.8 build. UE 5.6
+full-experience artifacts are maintenance-only and use `ue56`.
 
 ### 2.6 Verify the produced zip
 
 ```powershell
 python Tools\verify_package_integrity.py `
-    --zip Saved\UnrealMcp\Packages\UnrealMcp-v0.19.0-win-ue56-ue57-projectroot.zip `
+    --zip Saved\UnrealMcp\Packages\UnrealMcp-v0.35.0-win-ue57-ue58-projectroot.zip `
     --mode source `
     --strict
 ```
@@ -178,16 +195,16 @@ Note the sha256 — both the script output AND the `.sha256` sidecar should matc
 The Mac zip is already attached to each release. You add the Win zip + sha256 sidecar:
 
 ```powershell
-gh release upload v0.19.0 `
+gh release upload v0.35.0 `
     --repo edwinmeng163-oss/UEAtelier `
-    Saved\UnrealMcp\Packages\UnrealMcp-v0.19.0-win-ue56-ue57-projectroot.zip `
-    Saved\UnrealMcp\Packages\UnrealMcp-v0.19.0-win-ue56-ue57-projectroot.zip.sha256
+    Saved\UnrealMcp\Packages\UnrealMcp-v0.35.0-win-ue57-ue58-projectroot.zip `
+    Saved\UnrealMcp\Packages\UnrealMcp-v0.35.0-win-ue57-ue58-projectroot.zip.sha256
 ```
 
 Verify online:
 
 ```powershell
-gh release view v0.19.0 --repo edwinmeng163-oss/UEAtelier
+gh release view v0.35.0 --repo edwinmeng163-oss/UEAtelier
 ```
 
 You should see 4 assets attached (2 Mac + 2 Win).
@@ -197,11 +214,11 @@ You should see 4 assets attached (2 Mac + 2 Win).
 `gh release upload` refuses to overwrite by default. If you need to replace:
 
 ```powershell
-gh release upload v0.19.0 `
+gh release upload v0.35.0 `
     --repo edwinmeng163-oss/UEAtelier `
     --clobber `
-    Saved\UnrealMcp\Packages\UnrealMcp-v0.19.0-win-ue56-ue57-projectroot.zip `
-    Saved\UnrealMcp\Packages\UnrealMcp-v0.19.0-win-ue56-ue57-projectroot.zip.sha256
+    Saved\UnrealMcp\Packages\UnrealMcp-v0.35.0-win-ue57-ue58-projectroot.zip `
+    Saved\UnrealMcp\Packages\UnrealMcp-v0.35.0-win-ue57-ue58-projectroot.zip.sha256
 ```
 
 ### 3.2 Back-fill the CI-built Win zip from the workflow artifact (PM, from Mac)
@@ -214,12 +231,12 @@ gh run list --repo edwinmeng163-oss/UEAtelier --limit 5
 
 # 2. Download the artifact (name is UnrealMcp-<tag>-win-zip)
 cd /tmp && rm -rf winbf && mkdir winbf && cd winbf
-gh run download <run-id> --repo edwinmeng163-oss/UEAtelier --name "UnrealMcp-v0.26.0-win-zip"
+gh run download <run-id> --repo edwinmeng163-oss/UEAtelier --name "UnrealMcp-v0.35.0-win-zip"
 
 # 3. Verify hash. The CI sidecar has CRLF line endings, so `shasum -c` FAILS spuriously —
 #    strip CR and compare manually instead:
-SIDE=$(tr -d '\r' < UnrealMcp-v0.26.0-win-ue56-ue57-projectroot.zip.sha256 | awk '{print $1}')
-COMP=$(shasum -a 256 UnrealMcp-v0.26.0-win-ue56-ue57-projectroot.zip | awk '{print $1}')
+SIDE=$(tr -d '\r' < UnrealMcp-v0.35.0-win-ue57-ue58-projectroot.zip.sha256 | awk '{print $1}')
+COMP=$(shasum -a 256 UnrealMcp-v0.35.0-win-ue57-ue58-projectroot.zip | awk '{print $1}')
 [ "$SIDE" = "$COMP" ] && echo "MATCH" || echo "MISMATCH"
 
 # 4. (Optional but recommended) extract-verify it's clean — CI builds from the committed
@@ -227,21 +244,21 @@ COMP=$(shasum -a 256 UnrealMcp-v0.26.0-win-ue56-ue57-projectroot.zip | awk '{pri
 #    see Docs/BuildAndPackagingPitfalls.md § 9).
 
 # 5. Attach to the release
-gh release upload v0.26.0 --repo edwinmeng163-oss/UEAtelier --clobber \
-  UnrealMcp-v0.26.0-win-ue56-ue57-projectroot.zip \
-  UnrealMcp-v0.26.0-win-ue56-ue57-projectroot.zip.sha256
+gh release upload v0.35.0 --repo edwinmeng163-oss/UEAtelier --clobber \
+  UnrealMcp-v0.35.0-win-ue57-ue58-projectroot.zip \
+  UnrealMcp-v0.35.0-win-ue57-ue58-projectroot.zip.sha256
 ```
 
 The CI-built Win zip is the canonical Windows artifact (backslash entry paths, built on `windows-2022`). Prefer back-filling it over a manual Windows rebuild — they produce the same shape, and the CI one is already verified.
 
 ---
 
-## 4. Batch the backlog
+## 4. Batch current release tags
 
-To do all 6 pending versions in one session:
+For multiple v0.35 source-release tags in one manual fallback session:
 
 ```powershell
-$versions = @("0.15.1", "0.15.2", "0.16.0", "0.17.0", "0.18.0", "0.19.0")
+$versions = @("0.35.0") # Add later v0.35.x versions as needed.
 
 foreach ($v in $versions) {
     Write-Host "=== Packaging v$v ===" -ForegroundColor Cyan
@@ -268,7 +285,7 @@ foreach ($v in $versions) {
     if ($LASTEXITCODE -ne 0) { throw "package_plugin failed for v$v" }
 
     # Verify
-    $zip = "Saved\UnrealMcp\Packages\UnrealMcp-v$v-win-ue56-ue57-projectroot.zip"
+    $zip = "Saved\UnrealMcp\Packages\UnrealMcp-v$v-win-ue57-ue58-projectroot.zip"
     python Tools\verify_package_integrity.py --zip $zip --mode source --strict
     if ($LASTEXITCODE -ne 0) { throw "verify failed for v$v" }
 

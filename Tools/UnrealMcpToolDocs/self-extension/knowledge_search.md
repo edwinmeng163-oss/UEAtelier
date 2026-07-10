@@ -35,9 +35,31 @@ Reads the local KnowledgeCard index and returns compact source-linked cards; use
         "type": "string"
       }
     },
+    "sourceKinds": {
+      "type": "array",
+      "description": "Optional sourceKind values to include.",
+      "items": {
+        "type": "string",
+        "enum": [
+          "tool-registry",
+          "versioned-doc",
+          "official-docs",
+          "skill",
+          "runtime-memory",
+          "activity-log",
+          "test-fixture",
+          "unknown"
+        ]
+      }
+    },
+    "groupByKind": {
+      "type": "boolean",
+      "description": "Group results by sourceKind instead of returning one flat results array.",
+      "default": false
+    },
     "indexRoot": {
       "type": "string",
-      "description": "Optional index directory. Defaults to Saved/UnrealMcp/KnowledgeIndex."
+      "description": "Optional index directory inside the current project's Saved directory. Defaults to Saved/UnrealMcp/KnowledgeIndex."
     },
     "limit": {
       "type": "number",
@@ -67,6 +89,12 @@ _Provenance: fixture-derived_
 ```json
 {
   "query": "self extension tool registry",
+  "sourceKinds": [
+    "versioned-doc",
+    "tool-registry"
+  ],
+  "groupByKind": false,
+  "indexRoot": "Saved/UnrealMcp/Tests/SelfExtensionKnowledge/Index",
   "limit": 5,
   "maxExcerptChars": 240
 }

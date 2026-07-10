@@ -49,7 +49,7 @@ External reference sources to summarize into local docs instead of fetching ever
 turn:
 
 - MCP specification: tools, resources, prompts, and schema expectations.
-- Unreal Engine 5.7 docs: Blueprint, Widget Blueprint, Python API, C++ API,
+- Unreal Engine 5.7 and 5.8 docs: Blueprint, Widget Blueprint, Python API, C++ API,
   editor automation, build tooling, and plugin deployment.
 - OpenAI function calling and structured output docs: schema compatibility,
   tool calling behavior, and error patterns.
@@ -58,12 +58,16 @@ turn:
 
 Official Unreal Engine docs bootstrap:
 
-- Versioned seed manifest:
-  `Tools/UnrealMcpKnowledge/Sources/unreal_engine_official_docs_5_7.json`.
+- Versioned seed manifests:
+  `Tools/UnrealMcpKnowledge/Sources/unreal_engine_official_docs_5_7.json` and
+  `Tools/UnrealMcpKnowledge/Sources/unreal_engine_official_docs_5_8.json`.
 - Fetcher:
   `Tools/unreal_mcp_fetch_docs.py`.
-- Local cache:
-  `Saved/UnrealMcp/KnowledgeSources/UnrealEngineOfficialDocs/5.7`.
+- Version-separated local caches:
+  `Saved/UnrealMcp/KnowledgeSources/UnrealEngineOfficialDocs/5.7` and `5.8`.
+- Each seed declares `engineVersion`. A CLI override replaces any existing URL
+  query version and selects a matching cache, so 5.8 fetches cannot silently
+  contaminate 5.7 data. The extractor preserves H1-H6 as Markdown headings.
 - Normal documentation pages should prefer Epic's structured
   `community/api/documentation/document.json` endpoint. Static pages such as the
   Unreal Python API can be fetched as HTML.
@@ -78,22 +82,26 @@ Start with deterministic local retrieval before embeddings:
 1. Parse versioned docs, registry entries, test fixtures, skills, and selected
    local memory into normalized `KnowledgeCard` records. The versioned schema is
    `Schemas/UnrealMcpKnowledgeCard.schema.json`.
-   `unreal.knowledge_index_refresh` also scans markdown files under the
-   KnowledgeSources source root, including
+   With `includePromotedSources:true`, `unreal.knowledge_index_refresh` also
+   scans markdown files under the KnowledgeSources source root independently
+   from `includeOfficialDocs`, including
    `Saved/UnrealMcp/KnowledgeSources/TaskAtlas/*.md` and equivalent
    source-root subdirectories. Each markdown file becomes one inline
    `task-atlas` KnowledgeCard using the first H1 as the title and frontmatter
    `tags` when present.
-2. Store a generated index under `Saved/UnrealMcp/KnowledgeIndex/index.json`.
+2. Store a generated v2 index under
+   `Saved/UnrealMcp/KnowledgeIndex/index.json`. It records build/time/source
+   fingerprints, `cardsSha256`, source/engine counts, and truncation evidence.
    The `cards.jsonl` companion file is written as UTF-8 JSONL so external
    scripts and package validators can inspect it without Unreal-specific text
    decoding.
 3. Split markdown-like sources by section headings before chunking, so search
    can cite the relevant local section instead of a random character window.
-4. Score search with token matching, Chinese/English synonym expansion,
-   title/section/category boosts, source weights, confidence weights, and exact
-   tool-name boosts.
-5. De-duplicate near-identical cards and collapse repeated adjacent source
+4. Score search with boundary-aware Latin tokens, CJK bigrams, preserved
+   `5.7`/`5.8` aliases, lower-weight synonym expansions, title/section/category
+   boosts, source weights, confidence weights, and exact tool-name boosts.
+5. De-duplicate cards, reserve source-kind/engine-version diversity before the
+   global cap, use deterministic tie-breaks, and collapse repeated source
    sections in search results.
 6. Return compact cards with source path, excerpt, category, risk metadata, and
    suggested next tool calls.
@@ -107,15 +115,28 @@ added later as an optional backend, but the baseline should not require them.
 
 - Rebuilds the local knowledge index from versioned docs plus optional local
   runtime sources.
+- Zero-card rebuilds fail closed by default and preserve last-known-good state;
+  `allowEmptyIndex` is an explicit test escape hatch.
+- ActivityLog defaults off. Promoted markdown and official-doc toggles are
+  independent.
 - Default should be read-mostly with writes constrained to
   `Saved/UnrealMcp/KnowledgeIndex`.
+- Explicit `sourceRoot` and `indexRoot` values must remain inside the current
+  project's `Saved` directory; absolute paths and `..` traversal outside that
+  boundary fail closed before any read or write.
+- Recursive source scans do not follow symlinks or reparse points. Each
+  `documents.jsonl` row's `textPath` must remain below its manifest directory,
+  and `cards.jsonl` / `index.json` fixed leaves are rechecked before I/O.
+- Card `sourcePath` values may only probe freshness metadata inside the current
+  project or resolved shared repository root; unsafe paths use a missing
+  sentinel without touching the filesystem.
 - Should report source counts, skipped private sources, and index size.
 
 `unreal.knowledge_search` implemented
 
 - Searches the local index.
-- Inputs: `query`, optional `categories`, `limit`, `maxExcerptChars`, and
-  `includeText`.
+- Inputs: `query`, optional `categories`, `sourceKinds`, `groupByKind`, `limit`,
+  `maxExcerptChars`, `includeText`, and isolated `indexRoot`.
 - Outputs concise cards with source paths and suggested follow-up tools.
 
 `unreal.tool_recommend` implemented
@@ -142,18 +163,26 @@ added later as an optional backend, but the baseline should not require them.
 - Runs versioned local eval cases from `Tools/UnrealMcpKnowledge/Evals`.
 - Covers search, tool recommendation, gap analysis, and workflow recommendation
   regressions.
-- Returns pass rate, failed cases, and optional structured per-case evidence.
+- Supports an isolated `indexRoot` and rank assertions such as
+  `expectSourcePathsAtK`, `forbidTopSourcePathContains`, and `expectToolAtRank`.
+- Eval JSON reads are limited to the current project or the shared
+  `Tools/UnrealMcpKnowledge/Evals` root. Because `refreshIndex:true` can replace
+  an isolated Saved index, the tool is registered as a low-risk write. Eval
+  directory walks also skip symlinks and reparse points.
+- Returns pass rate, rank-assertion rate, failed cases, and optional structured
+  per-case evidence.
 
 ## Chat Integration
 
 Recommended turn flow for complex requests:
 
 1. Chat builds a compact local RAG/tool-planning capsule before AI turns. It
-   calls `unreal.tool_recommend`, refreshes the local index when missing, and
+   calls `unreal.tool_recommend`, refreshes the local index when its machine
+   status is `missing`, `empty`, `stale`, or `corrupt`, and
    injects only the top tools/cards/workflow gates into the model context.
 2. `unreal.tool_recommend` checks whether existing tools or recipes cover it.
 3. `unreal.knowledge_search` retrieves docs, tests, and failure patterns. If the
-   index is missing, run `unreal.knowledge_index_refresh` and retry the search.
+   index is not `ready`, run `unreal.knowledge_index_refresh` and retry.
 4. `unreal.preview_change_plan` turns the request into a structured plan using
    the recommendation/search evidence.
 5. `unreal.tool_gap_analyze` decides whether existing tools, a workflow, or a
@@ -171,7 +200,9 @@ Recommended turn flow for complex requests:
 
 - Versioned docs and registry data are safe to index by default.
 - Runtime memories, activity logs, chat history, drafts, and supervisor logs are
-  local-only and should be opt-in for indexing.
+  local-only. ActivityLog indexing defaults to false and requires explicit
+  opt-in; local storage alone is not authorization to inject summaries into a
+  provider context.
 - Search results should include source paths so users can inspect why a
   recommendation was made.
 - High-risk recommendations must preserve ToolRegistry policy, dry-run support,
@@ -198,9 +229,11 @@ they should support local model backends and explicit opt-in cloud embeddings.
 3. Convert fetched docs manifests and `documents.jsonl` rows into
    `KnowledgeCard` records, skipping low-content pages by default.
    Done for `documents.jsonl`, versioned docs, and visible ToolRegistry cards.
-4. Add tests for registry/doc search, missing index, and private-source opt-in.
-   Partially done with versioned-doc index refresh, search, recommendation, and
-   missing-required tests.
+4. Add tests for registry/doc search, index recovery, ranking, source diversity,
+   version tokens, and private-source opt-in. Reliability/retrieval coverage is
+   implemented in `UnrealMcpKnowledgeIndexReliabilityTests.cpp` and
+   `UnrealMcpKnowledgeRetrievalTests.cpp`, including atomic manifest-safe
+   outcome appends; broader privacy fixtures remain open.
 5. Implement `unreal.tool_recommend` using registry policy and search cards.
    Done.
 6. Implement `unreal.tool_gap_analyze` and connect it to scaffold generation.

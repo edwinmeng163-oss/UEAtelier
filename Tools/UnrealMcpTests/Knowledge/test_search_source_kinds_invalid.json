@@ -1,0 +1,22 @@
+{
+  "name": "knowledge_search_source_kinds_invalid",
+  "description": "knowledge_search should reject sourceKinds values outside the published enum.",
+  "category": "invalid_enum",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": true,
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 504,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.knowledge_search",
+      "arguments": {
+        "query": "knowledge source kind",
+        "sourceKinds": [
+          "not-a-source-kind"
+        ]
+      }
+    }
+  }
+}

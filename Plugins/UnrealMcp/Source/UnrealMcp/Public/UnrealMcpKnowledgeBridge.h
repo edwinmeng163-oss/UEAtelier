@@ -17,5 +17,6 @@ namespace UnrealMcp
 		const FString& Text,
 		const FString& SourcePath,
 		const TArray<FString>& Tags,
-		FString& OutFailureReason);
+		FString& OutFailureReason,
+		const FString& IndexRootOverride = FString());
 }

@@ -1,0 +1,129 @@
+{
+  "name": "unreal_engine_official_docs_5_8",
+  "version": 2,
+  "engineVersion": "5.8",
+  "description": "Curated Epic official Unreal Engine 5.8 documentation seeds for UEAtelier local RAG bootstrap.",
+  "defaultOutputDir": "Saved/UnrealMcp/KnowledgeSources/UnrealEngineOfficialDocs/5.8",
+  "licenseNotice": "Downloaded pages are Epic documentation content. Keep fetched page caches local under Saved/UnrealMcp and do not commit redistributed copies unless the license explicitly allows it.",
+  "sources": [
+    {
+      "id": "ue58-blueprints-overview",
+      "title": "Blueprints Visual Scripting",
+      "category": "blueprint",
+      "tags": ["blueprint", "visual-scripting", "editor"],
+      "url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/blueprints-visual-scripting-in-unreal-engine?application_version=5.8"
+    },
+    {
+      "id": "ue58-blueprint-best-practices",
+      "title": "Blueprint Best Practices",
+      "category": "blueprint",
+      "tags": ["blueprint", "classes", "architecture"],
+      "url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/blueprint-best-practices-in-unreal-engine?application_version=5.8"
+    },
+    {
+      "id": "ue58-blueprint-api",
+      "title": "Blueprint API Reference",
+      "category": "blueprint-api",
+      "tags": ["blueprint", "api", "nodes"],
+      "url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/BlueprintAPI?application_version=5.8"
+    },
+    {
+      "id": "ue58-cpp-programming",
+      "title": "Programming with C++",
+      "category": "cpp",
+      "tags": ["cpp", "reflection", "gameplay-framework"],
+      "url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/programming-with-cplusplus-in-unreal-engine?application_version=5.8"
+    },
+    {
+      "id": "ue58-cpp-quick-start",
+      "title": "Programming Quick Start",
+      "category": "cpp",
+      "tags": ["cpp", "build", "classes"],
+      "url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/unreal-engine-cpp-quick-start?application_version=5.8"
+    },
+    {
+      "id": "ue58-editor-automation",
+      "title": "Scripting and Automating the Unreal Editor",
+      "category": "editor-automation",
+      "tags": ["python", "blueprint", "editor-scripting", "automation"],
+      "url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/scripting-and-automating-the-unreal-editor?application_version=5.8"
+    },
+    {
+      "id": "ue58-input-overview",
+      "title": "Input",
+      "category": "input",
+      "tags": ["input", "player-controller", "pawn", "character"],
+      "url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/input-in-unreal-engine?application_version=5.8"
+    },
+    {
+      "id": "ue58-setting-up-character",
+      "title": "Setting Up a Character",
+      "category": "character",
+      "tags": ["character", "pawn", "game-mode", "player-controller", "movement", "first-person"],
+      "url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/setting-up-a-character-in-unreal-engine?application_version=5.8"
+    },
+    {
+      "id": "ue58-implementing-character",
+      "title": "Implementing your Character",
+      "category": "character",
+      "tags": ["character", "input", "movement", "first-person", "cpp"],
+      "url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/implementing-your-character-in-unreal-engine?application_version=5.8"
+    },
+    {
+      "id": "ue58-movement-components",
+      "title": "Movement Components",
+      "category": "movement",
+      "tags": ["movement", "character-movement", "pawn", "component"],
+      "url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/movement-components-in-unreal-engine?application_version=5.8"
+    },
+    {
+      "id": "ue58-gameplay-systems",
+      "title": "Gameplay Systems",
+      "category": "gameplay",
+      "tags": ["gameplay-framework", "game-mode", "controller", "pawn", "camera", "input"],
+      "url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/gameplay-systems-in-unreal-engine?application_version=5.8"
+    },
+    {
+      "id": "ue58-python-api-index",
+      "title": "Unreal Python API Documentation",
+      "category": "python-api",
+      "tags": ["python", "api", "editor"],
+      "url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/python-api/?application_version=5.8"
+    },
+    {
+      "id": "ue58-python-api-introduction",
+      "title": "Unreal Python API Introduction",
+      "category": "python-api",
+      "tags": ["python", "python-script-plugin", "editor"],
+      "url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/python-api/introduction?application_version=5.8"
+    },
+    {
+      "id": "ue58-umg-slate-ui",
+      "title": "Creating User Interfaces With UMG and Slate",
+      "category": "widget",
+      "tags": ["umg", "slate", "widget", "ui"],
+      "url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/creating-user-interfaces-with-umg-and-slate-in-unreal-engine?application_version=5.8"
+    },
+    {
+      "id": "ue58-editor-utility-widgets",
+      "title": "Editor Utility Widgets",
+      "category": "widget",
+      "tags": ["editor-utility-widget", "umg", "editor"],
+      "url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/editor-utility-widgets-in-unreal-engine?application_version=5.8"
+    },
+    {
+      "id": "ue58-cpp-api-root",
+      "title": "C++ API Reference",
+      "category": "cpp-api",
+      "tags": ["cpp", "api", "reference"],
+      "url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/API?application_version=5.8"
+    },
+    {
+      "id": "ue58-release-notes",
+      "title": "Unreal Engine 5.8 Release Notes",
+      "category": "release-notes",
+      "tags": ["release-notes", "scripting", "editor"],
+      "url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/unreal-engine-5-8-release-notes?application_version=5.8"
+    }
+  ]
+}

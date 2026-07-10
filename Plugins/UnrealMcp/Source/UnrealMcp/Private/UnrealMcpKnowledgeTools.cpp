@@ -2,8 +2,10 @@
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "GenericPlatform/GenericPlatformFile.h"
 #include "HAL/CriticalSection.h"
 #include "HAL/FileManager.h"
+#include "HAL/PlatformFileManager.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Misc/ScopeLock.h"
@@ -11,10 +13,17 @@
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
+#include "UnrealMcpHashUtils.h"
 #include "UnrealMcpKnowledgeBridge.h"
 #include "UnrealMcpSharedPathResolver.h"
 #include "UnrealMcpToolRegistrar.h"
 #include "UnrealMcpToolRegistry.h"
+
+#if PLATFORM_MAC || PLATFORM_LINUX
+#include <limits.h>
+#include <stdlib.h>
+#include <sys/stat.h>
+#endif
 
 namespace UnrealMcp
 {
@@ -43,12 +52,16 @@ namespace UnrealMcp
 			TArray<FString> Tags;
 			FString SourceKind;
 			FString SourcePath;
+			FString EngineVersion;
 			FString Url;
 			FString Text;
 			int32 ChunkIndex = 0;
 			int32 TextLength = 0;
 			double SourceWeight = 1.0;
 			double Confidence = 0.75;
+			FString SourceUpdatedAt;
+			FString IndexedAt;
+			FString ContentSha256;
 			FString UpdatedAt;
 		};
 
@@ -80,6 +93,7 @@ namespace UnrealMcp
 
 			FCriticalSection GKnowledgeCardCacheMutex;
 			FKnowledgeCardCacheState GKnowledgeCardCache;
+			TSharedPtr<FJsonObject> CardToJsonObject(const FKnowledgeCard& Card);
 
 		FString GetKnowledgeIndexRoot()
 		{
@@ -95,6 +109,7 @@ namespace UnrealMcp
 		{
 			FString Normalized = FPaths::ConvertRelativePathToFull(Path);
 			FPaths::NormalizeFilename(Normalized);
+			FPaths::CollapseRelativeDirectories(Normalized);
 			return Normalized;
 		}
 
@@ -106,6 +121,170 @@ namespace UnrealMcp
 				Resolved = FPaths::Combine(FPaths::ProjectDir(), Resolved);
 			}
 			return NormalizePathForJson(Resolved);
+		}
+
+		bool KnowledgePathEqualsOrChild(const FString& CandidatePath, const FString& RootPath)
+		{
+			FString Candidate = NormalizePathForJson(CandidatePath);
+			FString Root = NormalizePathForJson(RootPath);
+			FPaths::NormalizeDirectoryName(Candidate);
+			FPaths::NormalizeDirectoryName(Root);
+#if PLATFORM_WINDOWS
+			Candidate = Candidate.ToLower();
+			Root = Root.ToLower();
+#endif
+			return Candidate == Root || Candidate.StartsWith(Root + TEXT("/"), ESearchCase::CaseSensitive);
+		}
+
+		bool TryResolveKnowledgeRealPath(const FString& Path, FString& OutResolvedPath)
+		{
+			OutResolvedPath.Reset();
+#if PLATFORM_MAC || PLATFORM_LINUX
+			char Buffer[PATH_MAX + 1] = {};
+			FTCHARToUTF8 Converter(*Path);
+			if (realpath(Converter.Get(), Buffer) == nullptr)
+			{
+				return false;
+			}
+			FUTF8ToTCHAR TargetConverter(Buffer);
+			OutResolvedPath = NormalizePathForJson(FString(TargetConverter.Length(), TargetConverter.Get()));
+			return true;
+#else
+			(void)Path;
+			return false;
+#endif
+		}
+
+		bool IsKnowledgeSymlink(const FString& Path)
+		{
+#if PLATFORM_MAC || PLATFORM_LINUX
+			struct stat PathStat = {};
+			FTCHARToUTF8 Converter(*Path);
+			return lstat(Converter.Get(), &PathStat) == 0 && S_ISLNK(PathStat.st_mode);
+#else
+			return FPlatformFileManager::Get().GetPlatformFile().IsSymlink(*Path) == ESymlinkResult::Symlink;
+#endif
+		}
+
+		bool IsKnowledgePathWithinRoot(const FString& CandidatePath, const FString& AllowedRoot)
+		{
+			FString Candidate = NormalizePathForJson(CandidatePath);
+			FString Root = NormalizePathForJson(AllowedRoot);
+			FPaths::NormalizeDirectoryName(Candidate);
+			FPaths::NormalizeDirectoryName(Root);
+			if (!KnowledgePathEqualsOrChild(Candidate, Root))
+			{
+				return false;
+			}
+
+			FString CanonicalRoot = Root;
+			FString ResolvedRoot;
+			if (TryResolveKnowledgeRealPath(Root, ResolvedRoot))
+			{
+				CanonicalRoot = ResolvedRoot;
+			}
+			FString RelativePath = Candidate.Mid(Root.Len());
+			RelativePath.RemoveFromStart(TEXT("/"));
+			TArray<FString> Segments;
+			RelativePath.ParseIntoArray(Segments, TEXT("/"), true);
+
+			FString CurrentPath = Root;
+			for (const FString& Segment : Segments)
+			{
+				CurrentPath = FPaths::Combine(CurrentPath, Segment);
+				if (IsKnowledgeSymlink(CurrentPath))
+				{
+					return false;
+				}
+				if (FPaths::FileExists(CurrentPath) || FPaths::DirectoryExists(CurrentPath))
+				{
+					FString CanonicalCurrentPath;
+					if (TryResolveKnowledgeRealPath(CurrentPath, CanonicalCurrentPath)
+						&& !KnowledgePathEqualsOrChild(CanonicalCurrentPath, CanonicalRoot))
+					{
+						return false;
+					}
+				}
+			}
+			return true;
+		}
+
+		void FindKnowledgeFilesRecursiveNoLinks(
+			const FString& RootPath,
+			const FString& FilenamePattern,
+			TArray<FString>& OutFiles)
+		{
+			OutFiles.Reset();
+			const FString Root = NormalizePathForJson(RootPath);
+			IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+			if (!FPaths::DirectoryExists(Root)
+				|| IsKnowledgeSymlink(Root))
+			{
+				return;
+			}
+
+			TArray<FString> PendingDirectories;
+			PendingDirectories.Add(Root);
+			while (!PendingDirectories.IsEmpty())
+			{
+				const FString CurrentDirectory = PendingDirectories.Pop();
+				PlatformFile.IterateDirectory(
+					*CurrentDirectory,
+					[&](const TCHAR* FilenameOrDirectory, bool bIsDirectory)
+					{
+						const FString EntryPath = NormalizePathForJson(FilenameOrDirectory);
+						if (IsKnowledgeSymlink(EntryPath)
+							|| !IsKnowledgePathWithinRoot(EntryPath, Root))
+						{
+							return true;
+						}
+						if (bIsDirectory)
+						{
+							PendingDirectories.Add(EntryPath);
+						}
+						else if (FPaths::GetCleanFilename(EntryPath).MatchesWildcard(FilenamePattern, ESearchCase::IgnoreCase))
+						{
+							OutFiles.Add(EntryPath);
+						}
+						return true;
+					});
+			}
+		}
+
+		bool ResolveProjectSavedKnowledgePath(
+			const FString& RequestedPath,
+			const FString& DefaultPath,
+			const FString& FieldName,
+			FString& OutResolvedPath,
+			FString& OutFailureReason)
+		{
+			const FString TrimmedPath = RequestedPath.TrimStartAndEnd();
+			OutResolvedPath = ResolveProjectPathForJson(TrimmedPath.IsEmpty() ? DefaultPath : TrimmedPath);
+			const FString AllowedRoot = NormalizePathForJson(FPaths::ProjectSavedDir());
+			if (IsKnowledgePathWithinRoot(OutResolvedPath, AllowedRoot))
+			{
+				return true;
+			}
+
+			OutFailureReason = FString::Printf(
+				TEXT("Knowledge path field '%s' must resolve inside the current project's Saved directory '%s'."),
+				*FieldName,
+				*AllowedRoot);
+			return false;
+		}
+
+		FUnrealMcpExecutionResult MakeKnowledgePathRejectedResult(
+			const FString& Action,
+			const FString& FieldName,
+			const FString& RequestedPath,
+			const FString& FailureReason)
+		{
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("action"), Action);
+			StructuredContent->SetStringField(TEXT("rejectedField"), FieldName);
+			StructuredContent->SetStringField(TEXT("requestedPath"), RequestedPath);
+			StructuredContent->SetStringField(TEXT("allowedRoot"), NormalizePathForJson(FPaths::ProjectSavedDir()));
+			return MakeExecutionResult(FailureReason, StructuredContent, true);
 		}
 
 		FString MakeProjectRelativePath(const FString& Path)
@@ -151,31 +330,6 @@ namespace UnrealMcp
 			return FJsonSerializer::Deserialize(Reader, OutObject) && OutObject.IsValid();
 		}
 
-		bool WriteJsonObjectToFile(const TSharedPtr<FJsonObject>& Object, const FString& Path, FString& OutFailureReason)
-		{
-			if (!Object.IsValid())
-			{
-				OutFailureReason = TEXT("Cannot write an invalid JSON object.");
-				return false;
-			}
-
-			FString JsonText;
-			TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonText);
-			if (!FJsonSerializer::Serialize(Object.ToSharedRef(), Writer))
-			{
-				OutFailureReason = TEXT("Failed to serialize JSON object.");
-				return false;
-			}
-
-			IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path), true);
-			if (!FFileHelper::SaveStringToFile(JsonText, *Path, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
-			{
-				OutFailureReason = FString::Printf(TEXT("Failed to write '%s'."), *Path);
-				return false;
-			}
-			return true;
-		}
-
 		FString JsonObjectToCondensedString(const TSharedPtr<FJsonObject>& Object)
 		{
 			FString JsonText;
@@ -183,6 +337,259 @@ namespace UnrealMcp
 				TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&JsonText);
 			FJsonSerializer::Serialize(Object.ToSharedRef(), Writer);
 			return JsonText;
+		}
+
+		bool ValidateKnowledgeIndexLeafPaths(const FString& IndexDir, FString& OutFailureReason)
+		{
+			const FString CardsPath = FPaths::Combine(IndexDir, TEXT("cards.jsonl"));
+			const FString ManifestPath = FPaths::Combine(IndexDir, TEXT("index.json"));
+			if (!IsKnowledgePathWithinRoot(IndexDir, FPaths::ProjectSavedDir())
+				|| !IsKnowledgePathWithinRoot(CardsPath, IndexDir)
+				|| !IsKnowledgePathWithinRoot(ManifestPath, IndexDir))
+			{
+				OutFailureReason = TEXT("Knowledge index root and fixed leaf files must remain inside ProjectSavedDir without symlink or reparse-point traversal.");
+				return false;
+			}
+			return true;
+		}
+
+		bool WriteKnowledgeTextAtomic(const FString& Text, const FString& TargetPath, FString& OutFailureReason)
+		{
+			if (!IsKnowledgePathWithinRoot(TargetPath, FPaths::ProjectSavedDir()))
+			{
+				OutFailureReason = TEXT("Knowledge index target must remain inside ProjectSavedDir without symlink or reparse-point traversal.");
+				return false;
+			}
+			const FString TargetDir = FPaths::GetPath(TargetPath);
+			if (!IFileManager::Get().MakeDirectory(*TargetDir, true))
+			{
+				OutFailureReason = FString::Printf(TEXT("Failed to create knowledge index directory '%s'."), *TargetDir);
+				return false;
+			}
+
+			const FString TempPath = FString::Printf(
+				TEXT("%s.tmp.%s"),
+				*TargetPath,
+				*FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphensLower));
+			if (!FFileHelper::SaveStringToFile(Text, *TempPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+			{
+				OutFailureReason = FString::Printf(TEXT("Failed to write temporary knowledge index file '%s'."), *TempPath);
+				return false;
+			}
+			if (!IFileManager::Get().Move(*TargetPath, *TempPath, true, true))
+			{
+				IFileManager::Get().Delete(*TempPath, false, true);
+				OutFailureReason = FString::Printf(TEXT("Failed to atomically replace knowledge index file '%s'."), *TargetPath);
+				return false;
+			}
+			return true;
+		}
+
+		FString KnowledgeCardsToJsonl(const TArray<FKnowledgeCard>& Cards)
+		{
+			FString Output;
+			for (const FKnowledgeCard& Card : Cards)
+			{
+				Output += JsonObjectToCondensedString(CardToJsonObject(Card));
+				Output += LINE_TERMINATOR;
+			}
+			return Output;
+		}
+
+		FString ResolveKnowledgeCardSourcePath(const FString& SourcePath, const FString& VersionedRoot)
+		{
+			const FString ProjectRoot = NormalizePathForJson(FPaths::ProjectDir());
+			const FString ProjectCandidate = ResolveProjectPathForJson(SourcePath);
+			const bool bProjectCandidateSafe = IsKnowledgePathWithinRoot(ProjectCandidate, ProjectRoot)
+				|| (!VersionedRoot.IsEmpty() && IsKnowledgePathWithinRoot(ProjectCandidate, VersionedRoot));
+			if (bProjectCandidateSafe && IFileManager::Get().FileSize(*ProjectCandidate) >= 0)
+			{
+				return ProjectCandidate;
+			}
+
+			FString VersionedCandidate;
+			bool bVersionedCandidateSafe = false;
+			if (FPaths::IsRelative(SourcePath) && !VersionedRoot.IsEmpty())
+			{
+				VersionedCandidate = NormalizePathForJson(FPaths::Combine(VersionedRoot, SourcePath));
+				bVersionedCandidateSafe = IsKnowledgePathWithinRoot(VersionedCandidate, VersionedRoot);
+				if (bVersionedCandidateSafe && IFileManager::Get().FileSize(*VersionedCandidate) >= 0)
+				{
+					return VersionedCandidate;
+				}
+			}
+
+			if (bProjectCandidateSafe)
+			{
+				return ProjectCandidate;
+			}
+			return bVersionedCandidateSafe ? VersionedCandidate : FString();
+		}
+
+		void FinalizeKnowledgeCardMetadata(TArray<FKnowledgeCard>& Cards)
+		{
+			const FString IndexedAt = FDateTime::UtcNow().ToIso8601();
+			const FString VersionedRoot = ResolveVersionedProjectRoot();
+			for (FKnowledgeCard& Card : Cards)
+			{
+				Card.IndexedAt = IndexedAt;
+				Card.ContentSha256 = HashUtils::Sha256LowerHexFromUtf8(Card.Text);
+				const FString ResolvedPath = ResolveKnowledgeCardSourcePath(Card.SourcePath, VersionedRoot);
+				if (!ResolvedPath.IsEmpty() && IFileManager::Get().FileSize(*ResolvedPath) >= 0)
+				{
+					Card.SourceUpdatedAt = IFileManager::Get().GetTimeStamp(*ResolvedPath).ToIso8601();
+				}
+			}
+		}
+
+		FString ComputeKnowledgeSourceFingerprint(const TArray<FKnowledgeCard>& Cards)
+		{
+			TSet<FString> UniqueSourcePaths;
+			for (const FKnowledgeCard& Card : Cards)
+			{
+				const FString SourcePath = Card.SourcePath.TrimStartAndEnd();
+				if (!SourcePath.IsEmpty())
+				{
+					UniqueSourcePaths.Add(SourcePath);
+				}
+			}
+
+			TArray<FString> SortedSourcePaths = UniqueSourcePaths.Array();
+			SortedSourcePaths.Sort();
+			FString FingerprintInput;
+			const FString VersionedRoot = ResolveVersionedProjectRoot();
+			for (const FString& SourcePath : SortedSourcePaths)
+			{
+				const FString ResolvedPath = ResolveKnowledgeCardSourcePath(SourcePath, VersionedRoot);
+				if (ResolvedPath.IsEmpty())
+				{
+					FingerprintInput += FString::Printf(TEXT("unsafe:%s|-1|0\n"), *SourcePath);
+					continue;
+				}
+				const int64 FileSize = IFileManager::Get().FileSize(*ResolvedPath);
+				const FDateTime Timestamp = FileSize >= 0
+					? IFileManager::Get().GetTimeStamp(*ResolvedPath)
+					: FDateTime::MinValue();
+				FingerprintInput += FString::Printf(
+					TEXT("%s|%lld|%lld\n"),
+					*MakeProjectRelativePath(ResolvedPath),
+					static_cast<long long>(FileSize),
+					static_cast<long long>(Timestamp.GetTicks()));
+			}
+			return HashUtils::Sha256LowerHexFromUtf8(FingerprintInput);
+		}
+
+		TSharedPtr<FJsonObject> MakeKnowledgeSourceKindCounts(const TArray<FKnowledgeCard>& Cards)
+		{
+			TMap<FString, int32> Counts;
+			for (const FKnowledgeCard& Card : Cards)
+			{
+				Counts.FindOrAdd(Card.SourceKind.IsEmpty() ? TEXT("unknown") : Card.SourceKind)++;
+			}
+
+			TArray<FString> Kinds;
+			Counts.GetKeys(Kinds);
+			Kinds.Sort();
+			TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+			for (const FString& Kind : Kinds)
+			{
+				Result->SetNumberField(Kind, Counts.FindRef(Kind));
+			}
+			return Result;
+		}
+
+		TSharedPtr<FJsonObject> MakeKnowledgeEngineVersionCounts(const TArray<FKnowledgeCard>& Cards)
+		{
+			TMap<FString, int32> Counts;
+			for (const FKnowledgeCard& Card : Cards)
+			{
+				if (!Card.EngineVersion.IsEmpty())
+				{
+					Counts.FindOrAdd(Card.EngineVersion)++;
+				}
+			}
+			TArray<FString> Versions;
+			Counts.GetKeys(Versions);
+			Versions.Sort();
+			TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+			for (const FString& Version : Versions)
+			{
+				Result->SetNumberField(Version, Counts.FindRef(Version));
+			}
+			return Result;
+		}
+
+		bool WriteKnowledgeIndexPairAtomic(
+			const FString& CardsPath,
+			const FString& CardsText,
+			const FString& ManifestPath,
+			const FString& ManifestText,
+			FString& OutFailureReason)
+		{
+			const FString IndexDir = FPaths::GetPath(CardsPath);
+			if (!FPaths::GetPath(ManifestPath).Equals(IndexDir, ESearchCase::CaseSensitive)
+				|| !ValidateKnowledgeIndexLeafPaths(IndexDir, OutFailureReason))
+			{
+				if (OutFailureReason.IsEmpty())
+				{
+					OutFailureReason = TEXT("Knowledge index cards and manifest must share the same bounded index root.");
+				}
+				return false;
+			}
+			const bool bHadCards = FPaths::FileExists(CardsPath);
+			const bool bHadManifest = FPaths::FileExists(ManifestPath);
+			FString PreviousCards;
+			FString PreviousManifest;
+			if ((bHadCards && !FFileHelper::LoadFileToString(PreviousCards, *CardsPath))
+				|| (bHadManifest && !FFileHelper::LoadFileToString(PreviousManifest, *ManifestPath)))
+			{
+				OutFailureReason = TEXT("Failed to preserve the last-known-good knowledge index before replacement.");
+				return false;
+			}
+
+			auto RestorePrevious = [&]()
+			{
+				FString IgnoredFailureReason;
+				if (bHadCards)
+				{
+					WriteKnowledgeTextAtomic(PreviousCards, CardsPath, IgnoredFailureReason);
+				}
+				else
+				{
+					IFileManager::Get().Delete(*CardsPath, false, true);
+				}
+				if (bHadManifest)
+				{
+					WriteKnowledgeTextAtomic(PreviousManifest, ManifestPath, IgnoredFailureReason);
+				}
+				else
+				{
+					IFileManager::Get().Delete(*ManifestPath, false, true);
+				}
+			};
+
+			if (!WriteKnowledgeTextAtomic(CardsText, CardsPath, OutFailureReason))
+			{
+				return false;
+			}
+			if (!WriteKnowledgeTextAtomic(ManifestText, ManifestPath, OutFailureReason))
+			{
+				RestorePrevious();
+				return false;
+			}
+
+			FString WrittenCards;
+			FString WrittenManifest;
+			if (!FFileHelper::LoadFileToString(WrittenCards, *CardsPath)
+				|| !FFileHelper::LoadFileToString(WrittenManifest, *ManifestPath)
+				|| !WrittenCards.Equals(CardsText, ESearchCase::CaseSensitive)
+				|| !WrittenManifest.Equals(ManifestText, ESearchCase::CaseSensitive))
+			{
+				RestorePrevious();
+				OutFailureReason = TEXT("Knowledge index verification failed after replacement; the last-known-good index was restored.");
+				return false;
+			}
+			return true;
 		}
 
 		FString SanitizeKnowledgeId(const FString& Value)
@@ -214,28 +621,124 @@ namespace UnrealMcp
 			return Output.IsEmpty() ? TEXT("knowledge-card") : Output;
 		}
 
+		bool IsKnowledgeCjkCharacter(TCHAR Character)
+		{
+			return (Character >= 0x3400 && Character <= 0x4dbf)
+				|| (Character >= 0x4e00 && Character <= 0x9fff)
+				|| (Character >= 0x3040 && Character <= 0x30ff)
+				|| (Character >= 0xac00 && Character <= 0xd7af);
+		}
+
+		bool IsKnowledgeVersionToken(const FString& Token)
+		{
+			const int32 DotIndex = Token.Find(TEXT("."));
+			if (DotIndex <= 0 || DotIndex >= Token.Len() - 1 || Token.Find(TEXT("."), ESearchCase::CaseSensitive, ESearchDir::FromStart, DotIndex + 1) != INDEX_NONE)
+			{
+				return false;
+			}
+			for (int32 Index = 0; Index < Token.Len(); ++Index)
+			{
+				if (Index != DotIndex && !FChar::IsDigit(Token[Index]))
+				{
+					return false;
+				}
+			}
+			return true;
+		}
+
+		bool IsKnowledgeWordCharacter(TCHAR Character)
+		{
+			return FChar::IsAlnum(Character) || Character == TEXT('_');
+		}
+
+		bool ContainsKnowledgeSearchTerm(const FString& LowerText, const FString& LowerTerm)
+		{
+			if (LowerTerm.IsEmpty())
+			{
+				return false;
+			}
+			for (TCHAR Character : LowerTerm)
+			{
+				if (Character > 0x7f)
+				{
+					return LowerText.Contains(LowerTerm, ESearchCase::CaseSensitive);
+				}
+			}
+
+			int32 SearchFrom = 0;
+			while (SearchFrom <= LowerText.Len() - LowerTerm.Len())
+			{
+				const int32 MatchIndex = LowerText.Find(LowerTerm, ESearchCase::CaseSensitive, ESearchDir::FromStart, SearchFrom);
+				if (MatchIndex == INDEX_NONE)
+				{
+					return false;
+				}
+				const int32 MatchEnd = MatchIndex + LowerTerm.Len();
+				const bool bLeftBoundary = MatchIndex == 0 || !IsKnowledgeWordCharacter(LowerText[MatchIndex - 1]);
+				const bool bRightBoundary = MatchEnd == LowerText.Len() || !IsKnowledgeWordCharacter(LowerText[MatchEnd]);
+				if (bLeftBoundary && bRightBoundary)
+				{
+					return true;
+				}
+				SearchFrom = MatchIndex + 1;
+			}
+			return false;
+		}
+
 		TArray<FString> ExtractSearchTokens(const FString& Text)
 		{
 			TArray<FString> Tokens;
 			FString Current;
-			for (TCHAR Character : Text.ToLower())
+			const FString LowerText = Text.ToLower();
+			auto FlushCurrent = [&]()
 			{
+				if (Current.Len() >= 2)
+				{
+					Tokens.AddUnique(Current);
+					for (int32 Index = 0; Index + 1 < Current.Len(); ++Index)
+					{
+						if (IsKnowledgeCjkCharacter(Current[Index]) && IsKnowledgeCjkCharacter(Current[Index + 1]))
+						{
+							Tokens.AddUnique(Current.Mid(Index, 2));
+						}
+					}
+				}
+				Current.Reset();
+			};
+
+			for (int32 Index = 0; Index < LowerText.Len(); ++Index)
+			{
+				const TCHAR Character = LowerText[Index];
 				if (FChar::IsAlnum(Character) || Character == TEXT('_'))
+				{
+					Current.AppendChar(Character);
+				}
+				else if (Character == TEXT('.')
+					&& !Current.IsEmpty()
+					&& FChar::IsDigit(Current[Current.Len() - 1])
+					&& Index + 1 < LowerText.Len()
+					&& FChar::IsDigit(LowerText[Index + 1]))
 				{
 					Current.AppendChar(Character);
 				}
 				else
 				{
-					if (Current.Len() >= 2)
-					{
-						Tokens.AddUnique(Current);
-					}
-					Current.Reset();
+					FlushCurrent();
 				}
 			}
-			if (Current.Len() >= 2)
+			FlushCurrent();
+
+			const TArray<FString> OriginalTokens = Tokens;
+			for (const FString& Token : OriginalTokens)
 			{
-				Tokens.AddUnique(Current);
+				if (Token.StartsWith(TEXT("ue"), ESearchCase::CaseSensitive) && IsKnowledgeVersionToken(Token.Mid(2)))
+				{
+					Tokens.AddUnique(Token.Mid(2));
+				}
+				else if (IsKnowledgeVersionToken(Token))
+				{
+					Tokens.AddUnique(TEXT("ue") + Token);
+				}
 			}
 			return Tokens;
 		}
@@ -245,7 +748,7 @@ namespace UnrealMcp
 			bool bMatched = false;
 			for (const FString& Term : Group)
 			{
-				if (QueryLower.Contains(Term.ToLower()))
+				if (ContainsKnowledgeSearchTerm(QueryLower, Term.ToLower()))
 				{
 					bMatched = true;
 					break;
@@ -729,12 +1232,28 @@ namespace UnrealMcp
 			Object->SetArrayField(TEXT("tags"), StringsToJsonArray(Card.Tags));
 			Object->SetStringField(TEXT("sourceKind"), Card.SourceKind);
 			Object->SetStringField(TEXT("sourcePath"), Card.SourcePath);
+			if (!Card.EngineVersion.IsEmpty())
+			{
+				Object->SetStringField(TEXT("engineVersion"), Card.EngineVersion);
+			}
 			Object->SetStringField(TEXT("url"), Card.Url);
 			Object->SetStringField(TEXT("text"), Card.Text);
 			Object->SetNumberField(TEXT("chunkIndex"), Card.ChunkIndex);
 			Object->SetNumberField(TEXT("textLength"), Card.TextLength);
 			Object->SetNumberField(TEXT("sourceWeight"), Card.SourceWeight);
 			Object->SetNumberField(TEXT("confidence"), Card.Confidence);
+			if (!Card.SourceUpdatedAt.IsEmpty())
+			{
+				Object->SetStringField(TEXT("sourceUpdatedAt"), Card.SourceUpdatedAt);
+			}
+			if (!Card.IndexedAt.IsEmpty())
+			{
+				Object->SetStringField(TEXT("indexedAt"), Card.IndexedAt);
+			}
+			if (!Card.ContentSha256.IsEmpty())
+			{
+				Object->SetStringField(TEXT("contentSha256"), Card.ContentSha256);
+			}
 			Object->SetStringField(TEXT("updatedAt"), Card.UpdatedAt);
 			return Object;
 		}
@@ -754,8 +1273,12 @@ namespace UnrealMcp
 			Object->TryGetStringField(TEXT("category"), OutCard.Category);
 			Object->TryGetStringField(TEXT("sourceKind"), OutCard.SourceKind);
 			Object->TryGetStringField(TEXT("sourcePath"), OutCard.SourcePath);
+			Object->TryGetStringField(TEXT("engineVersion"), OutCard.EngineVersion);
 			Object->TryGetStringField(TEXT("url"), OutCard.Url);
 			Object->TryGetStringField(TEXT("text"), OutCard.Text);
+			Object->TryGetStringField(TEXT("sourceUpdatedAt"), OutCard.SourceUpdatedAt);
+			Object->TryGetStringField(TEXT("indexedAt"), OutCard.IndexedAt);
+			Object->TryGetStringField(TEXT("contentSha256"), OutCard.ContentSha256);
 			Object->TryGetStringField(TEXT("updatedAt"), OutCard.UpdatedAt);
 			TryGetStringArrayFromObject(Object, TEXT("tags"), OutCard.Tags);
 
@@ -792,6 +1315,14 @@ namespace UnrealMcp
 			{
 				OutCard.Confidence = ConfidenceForKind(OutCard.SourceKind);
 			}
+			if (OutCard.IndexedAt.IsEmpty())
+			{
+				OutCard.IndexedAt = OutCard.UpdatedAt;
+			}
+			if (OutCard.ContentSha256.IsEmpty())
+			{
+				OutCard.ContentSha256 = HashUtils::Sha256LowerHexFromUtf8(OutCard.Text);
+			}
 
 			return !OutCard.CardId.IsEmpty() && !OutCard.Text.IsEmpty();
 		}
@@ -805,9 +1336,10 @@ namespace UnrealMcp
 			const FString& SourcePath,
 			const FString& Url,
 			const FString& Text,
-			int32 MaxChunkChars,
-			int32 OverlapChars,
-			TArray<FKnowledgeCard>& OutCards)
+				int32 MaxChunkChars,
+				int32 OverlapChars,
+				TArray<FKnowledgeCard>& OutCards,
+				const FString& EngineVersion = FString())
 		{
 			const FString CleanText = Text.TrimStartAndEnd();
 			if (CleanText.IsEmpty())
@@ -842,8 +1374,9 @@ namespace UnrealMcp
 						Card.SectionPath = Section.Path.IsEmpty() ? Card.SectionTitle : Section.Path;
 						Card.Category = Category;
 						Card.Tags = Tags;
-						Card.SourceKind = SourceKind;
-						Card.SourcePath = SourcePath;
+							Card.SourceKind = SourceKind;
+							Card.SourcePath = SourcePath;
+							Card.EngineVersion = EngineVersion;
 						Card.Url = Url;
 						Card.Text = ChunkText;
 						Card.ChunkIndex = ChunkIndex;
@@ -871,12 +1404,18 @@ namespace UnrealMcp
 
 		void AddDocumentationJsonlCards(
 			const FString& DocumentsJsonlPath,
+			const FString& AllowedSourceRoot,
 			int32 MaxChunkChars,
 			int32 OverlapChars,
 			bool bSkipLowContent,
 			TArray<FKnowledgeCard>& OutCards,
 			int32& OutSkippedRows)
 		{
+			if (!IsKnowledgePathWithinRoot(DocumentsJsonlPath, AllowedSourceRoot))
+			{
+				OutSkippedRows++;
+				return;
+			}
 			TArray<FString> Lines;
 			if (!FFileHelper::LoadFileToStringArray(Lines, *DocumentsJsonlPath))
 			{
@@ -914,6 +1453,11 @@ namespace UnrealMcp
 				}
 
 				const FString FullTextPath = NormalizePathForJson(FPaths::Combine(RootDir, TextPath));
+				if (!IsKnowledgePathWithinRoot(FullTextPath, RootDir))
+				{
+					OutSkippedRows++;
+					continue;
+				}
 				FString Text;
 				if (!FFileHelper::LoadFileToString(Text, *FullTextPath))
 				{
@@ -923,14 +1467,21 @@ namespace UnrealMcp
 
 				FString Id;
 				FString Title;
-				FString Category;
-				FString Url;
+					FString Category;
+					FString Url;
+					FString EngineVersion;
 				TArray<FString> Tags;
 				Row->TryGetStringField(TEXT("id"), Id);
 				Row->TryGetStringField(TEXT("title"), Title);
 				Row->TryGetStringField(TEXT("category"), Category);
-				Row->TryGetStringField(TEXT("url"), Url);
-				TryGetStringArrayFromObject(Row, TEXT("tags"), Tags);
+					Row->TryGetStringField(TEXT("url"), Url);
+					Row->TryGetStringField(TEXT("engineVersion"), EngineVersion);
+					TryGetStringArrayFromObject(Row, TEXT("tags"), Tags);
+					if (!EngineVersion.IsEmpty())
+					{
+						Tags.AddUnique(EngineVersion);
+						Tags.AddUnique(TEXT("ue") + EngineVersion);
+					}
 				if (Id.IsEmpty())
 				{
 					Id = FPaths::GetBaseFilename(FullTextPath);
@@ -955,7 +1506,8 @@ namespace UnrealMcp
 					Text,
 					MaxChunkChars,
 					OverlapChars,
-					OutCards);
+					OutCards,
+					EngineVersion);
 			}
 		}
 
@@ -1002,7 +1554,11 @@ namespace UnrealMcp
 				return;
 			}
 
-			IFileManager::Get().FindFilesRecursive(OutMarkdownFiles, *SourceRoot, TEXT("*.md"), true, false);
+			FindKnowledgeFilesRecursiveNoLinks(SourceRoot, TEXT("*.md"), OutMarkdownFiles);
+			OutMarkdownFiles.RemoveAll([&SourceRoot](const FString& FilePath)
+			{
+				return !IsKnowledgePathWithinRoot(FilePath, SourceRoot);
+			});
 			OutMarkdownFiles.Sort();
 
 			TSet<FString> UsedCardIds;
@@ -1094,7 +1650,7 @@ namespace UnrealMcp
 
 			for (const FString& FilePath : RootDocs)
 			{
-				if (FPaths::FileExists(FilePath))
+				if (FPaths::FileExists(FilePath) && IsKnowledgePathWithinRoot(FilePath, ProjectDir))
 				{
 					AddMarkdownFileCards(
 						FilePath,
@@ -1108,7 +1664,8 @@ namespace UnrealMcp
 			}
 
 			TArray<FString> DocFiles;
-			IFileManager::Get().FindFilesRecursive(DocFiles, *FPaths::Combine(ProjectDir, TEXT("Docs")), TEXT("*.md"), true, false);
+			FindKnowledgeFilesRecursiveNoLinks(FPaths::Combine(ProjectDir, TEXT("Docs")), TEXT("*.md"), DocFiles);
+			DocFiles.Sort();
 			for (const FString& FilePath : DocFiles)
 			{
 				AddMarkdownFileCards(
@@ -1182,7 +1739,11 @@ namespace UnrealMcp
 				}
 
 				TArray<FString> SkillFiles;
-				IFileManager::Get().FindFilesRecursive(SkillFiles, *SkillRoot, TEXT("SKILL.md"), true, false);
+				FindKnowledgeFilesRecursiveNoLinks(SkillRoot, TEXT("SKILL.md"), SkillFiles);
+				SkillFiles.RemoveAll([&SkillRoot](const FString& FilePath)
+				{
+					return !IsKnowledgePathWithinRoot(FilePath, SkillRoot);
+				});
 				SkillFiles.Sort();
 
 				const FString NowIso = FDateTime::UtcNow().ToIso8601();
@@ -1391,7 +1952,11 @@ namespace UnrealMcp
 				}
 
 				TArray<FString> ActivityFiles;
-				IFileManager::Get().FindFilesRecursive(ActivityFiles, *ActivityRoot, TEXT("*.jsonl"), true, false);
+				FindKnowledgeFilesRecursiveNoLinks(ActivityRoot, TEXT("*.jsonl"), ActivityFiles);
+				ActivityFiles.RemoveAll([&ActivityRoot](const FString& FilePath)
+				{
+					return !IsKnowledgePathWithinRoot(FilePath, ActivityRoot);
+				});
 				ActivityFiles.Sort();
 				OutActivityLogFileCount = ActivityFiles.Num();
 
@@ -1461,20 +2026,7 @@ namespace UnrealMcp
 
 		bool WriteKnowledgeCardsJsonl(const FString& Path, const TArray<FKnowledgeCard>& Cards, FString& OutFailureReason)
 		{
-			IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path), true);
-			FString Output;
-			for (const FKnowledgeCard& Card : Cards)
-			{
-				Output += JsonObjectToCondensedString(CardToJsonObject(Card));
-				Output += LINE_TERMINATOR;
-			}
-
-			if (!FFileHelper::SaveStringToFile(Output, *Path, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
-			{
-				OutFailureReason = FString::Printf(TEXT("Failed to write knowledge cards '%s'."), *Path);
-				return false;
-			}
-			return true;
+			return WriteKnowledgeTextAtomic(KnowledgeCardsToJsonl(Cards), Path, OutFailureReason);
 		}
 
 		FString MakeKnowledgeDedupKey(const FKnowledgeCard& Card)
@@ -1512,19 +2064,168 @@ namespace UnrealMcp
 				Cards = MoveTemp(UniqueCards);
 			}
 
+			int32 TruncateKnowledgeCardsWithSourceDiversity(TArray<FKnowledgeCard>& Cards, int32 MaxCards)
+			{
+				if (Cards.Num() <= MaxCards)
+				{
+					return 0;
+				}
+
+				const int32 TruncatedCount = Cards.Num() - MaxCards;
+				TSet<int32> SelectedIndexes;
+				TSet<FString> SelectedBuckets;
+				for (int32 Index = 0; Index < Cards.Num() && SelectedIndexes.Num() < MaxCards; ++Index)
+				{
+					FString Bucket = Cards[Index].SourceKind.IsEmpty() ? TEXT("unknown") : Cards[Index].SourceKind;
+					if (!Cards[Index].EngineVersion.IsEmpty())
+					{
+						Bucket += TEXT("|engine:") + Cards[Index].EngineVersion;
+					}
+					if (!SelectedBuckets.Contains(Bucket))
+					{
+						SelectedBuckets.Add(Bucket);
+						SelectedIndexes.Add(Index);
+					}
+				}
+				for (int32 Index = 0; Index < Cards.Num() && SelectedIndexes.Num() < MaxCards; ++Index)
+				{
+					SelectedIndexes.Add(Index);
+				}
+
+				TArray<int32> SortedIndexes = SelectedIndexes.Array();
+				SortedIndexes.Sort();
+				TArray<FKnowledgeCard> SelectedCards;
+				SelectedCards.Reserve(SortedIndexes.Num());
+				for (int32 Index : SortedIndexes)
+				{
+					SelectedCards.Add(MoveTemp(Cards[Index]));
+				}
+				Cards = MoveTemp(SelectedCards);
+				return TruncatedCount;
+			}
+
 			void InvalidateKnowledgeCardCache()
 			{
 				FScopeLock Lock(&GKnowledgeCardCacheMutex);
 				GKnowledgeCardCache = FKnowledgeCardCacheState();
 			}
 
-			bool LoadKnowledgeCards(const FString& IndexDir, TArray<FKnowledgeCard>& OutCards, FString& OutFailureReason)
+			bool EvaluateKnowledgeIndexManifest(
+				const FString& IndexDir,
+				const TArray<FKnowledgeCard>& Cards,
+				bool bVerifyCardsHash,
+				FString& OutStatus,
+				FString& OutReason)
 			{
+				OutStatus = TEXT("ready");
+				OutReason.Reset();
+				if (!ValidateKnowledgeIndexLeafPaths(IndexDir, OutReason))
+				{
+					OutStatus = TEXT("corrupt");
+					return false;
+				}
+				const FString CardsPath = FPaths::Combine(IndexDir, TEXT("cards.jsonl"));
+				const FString ManifestPath = FPaths::Combine(IndexDir, TEXT("index.json"));
+				if (!FPaths::FileExists(ManifestPath))
+				{
+					OutStatus = TEXT("stale");
+					OutReason = TEXT("Knowledge index manifest is missing; refresh the index to rebuild freshness metadata.");
+					return true;
+				}
+
+				FString ManifestText;
+				TSharedPtr<FJsonObject> Manifest;
+				if (!FFileHelper::LoadFileToString(ManifestText, *ManifestPath)
+					|| !LoadJsonObjectFromString(ManifestText, Manifest))
+				{
+					OutStatus = TEXT("corrupt");
+					OutReason = FString::Printf(TEXT("Knowledge index manifest '%s' is not valid JSON."), *ManifestPath);
+					return false;
+				}
+
+				double ManifestCardCount = -1.0;
+				if (Manifest->TryGetNumberField(TEXT("cardCount"), ManifestCardCount)
+					&& static_cast<int32>(ManifestCardCount) != Cards.Num())
+				{
+					OutStatus = TEXT("corrupt");
+					OutReason = FString::Printf(
+						TEXT("Knowledge index card count mismatch: manifest=%d, cards=%d."),
+						static_cast<int32>(ManifestCardCount),
+						Cards.Num());
+					return false;
+				}
+
+				FString ExpectedCardsSha256;
+				const bool bHasCardsSha256 = Manifest->TryGetStringField(TEXT("cardsSha256"), ExpectedCardsSha256)
+					&& !ExpectedCardsSha256.IsEmpty();
+				if (bVerifyCardsHash && bHasCardsSha256)
+				{
+					FString CardsText;
+					if (!FFileHelper::LoadFileToString(CardsText, *CardsPath)
+						|| !HashUtils::Sha256LowerHexFromUtf8(CardsText).Equals(ExpectedCardsSha256, ESearchCase::IgnoreCase))
+					{
+						OutStatus = TEXT("corrupt");
+						OutReason = TEXT("Knowledge index cardsSha256 does not match cards.jsonl.");
+						return false;
+					}
+				}
+
+				FString Schema;
+				FString GeneratedAtUtc;
+				FString ExpectedSourceFingerprint;
+				const bool bHasV2Metadata = Manifest->TryGetStringField(TEXT("schema"), Schema)
+					&& Schema.Equals(TEXT("UEvolve.KnowledgeIndex.v2"), ESearchCase::CaseSensitive)
+					&& Manifest->TryGetStringField(TEXT("generatedAtUtc"), GeneratedAtUtc)
+					&& !GeneratedAtUtc.IsEmpty()
+					&& bHasCardsSha256
+					&& Manifest->TryGetStringField(TEXT("sourceFingerprint"), ExpectedSourceFingerprint)
+					&& !ExpectedSourceFingerprint.IsEmpty();
+				if (!bHasV2Metadata)
+				{
+					OutStatus = TEXT("stale");
+					OutReason = TEXT("Knowledge index uses legacy or incomplete freshness metadata.");
+					return true;
+				}
+
+				const FString CurrentSourceFingerprint = ComputeKnowledgeSourceFingerprint(Cards);
+				if (!CurrentSourceFingerprint.Equals(ExpectedSourceFingerprint, ESearchCase::IgnoreCase))
+				{
+					OutStatus = TEXT("stale");
+					OutReason = TEXT("One or more indexed knowledge sources changed after the last refresh.");
+				}
+				return true;
+			}
+
+			bool LoadKnowledgeCards(
+				const FString& IndexDir,
+				TArray<FKnowledgeCard>& OutCards,
+				FString& OutFailureReason,
+				FString* OutIndexStatus = nullptr)
+			{
+				auto SetStatus = [OutIndexStatus](const FString& Status)
+				{
+					if (OutIndexStatus)
+					{
+						*OutIndexStatus = Status;
+					}
+				};
+				if (!ValidateKnowledgeIndexLeafPaths(IndexDir, OutFailureReason))
+				{
+					SetStatus(TEXT("corrupt"));
+					return false;
+				}
 				const FString CardsPath = FPaths::Combine(IndexDir, TEXT("cards.jsonl"));
 				const int64 FileSize = IFileManager::Get().FileSize(*CardsPath);
 				if (FileSize < 0)
 				{
+					SetStatus(TEXT("missing"));
 					OutFailureReason = FString::Printf(TEXT("Knowledge index not found at '%s'. Run unreal.knowledge_index_refresh first."), *CardsPath);
+					return false;
+				}
+				if (FileSize == 0)
+				{
+					SetStatus(TEXT("empty"));
+					OutFailureReason = FString::Printf(TEXT("Knowledge index '%s' contains no cards."), *CardsPath);
 					return false;
 				}
 				const FDateTime FileTimestamp = IFileManager::Get().GetTimeStamp(*CardsPath);
@@ -1539,9 +2240,17 @@ namespace UnrealMcp
 						OutCards = GKnowledgeCardCache.Cards;
 						if (OutCards.IsEmpty())
 						{
+							SetStatus(TEXT("empty"));
 							OutFailureReason = FString::Printf(TEXT("Knowledge index '%s' contains no cards."), *CardsPath);
 							return false;
 						}
+						FString IndexStatus;
+						if (!EvaluateKnowledgeIndexManifest(IndexDir, OutCards, false, IndexStatus, OutFailureReason))
+						{
+							SetStatus(IndexStatus);
+							return false;
+						}
+						SetStatus(IndexStatus);
 						return true;
 					}
 				}
@@ -1549,20 +2258,25 @@ namespace UnrealMcp
 				TArray<FString> Lines;
 				if (!FFileHelper::LoadFileToStringArray(Lines, *CardsPath))
 				{
+					SetStatus(TEXT("missing"));
 					OutFailureReason = FString::Printf(TEXT("Knowledge index not found at '%s'. Run unreal.knowledge_index_refresh first."), *CardsPath);
 					return false;
 				}
 
 				TArray<FKnowledgeCard> LoadedCards;
+				bool bSawNonEmptyLine = false;
+				bool bSawInvalidLine = false;
 				for (const FString& Line : Lines)
 				{
 					if (Line.TrimStartAndEnd().IsEmpty())
 					{
 						continue;
 					}
+					bSawNonEmptyLine = true;
 					TSharedPtr<FJsonObject> Object;
 					if (!LoadJsonObjectFromString(Line, Object))
 					{
+						bSawInvalidLine = true;
 						continue;
 					}
 					FKnowledgeCard Card;
@@ -1570,11 +2284,26 @@ namespace UnrealMcp
 					{
 						LoadedCards.Add(MoveTemp(Card));
 					}
+					else
+					{
+						bSawInvalidLine = true;
+					}
 				}
 
 				if (LoadedCards.IsEmpty())
 				{
-					OutFailureReason = FString::Printf(TEXT("Knowledge index '%s' contains no cards."), *CardsPath);
+					const bool bCorrupt = bSawNonEmptyLine && bSawInvalidLine;
+					SetStatus(bCorrupt ? TEXT("corrupt") : TEXT("empty"));
+					OutFailureReason = bCorrupt
+						? FString::Printf(TEXT("Knowledge index '%s' contains no valid KnowledgeCards."), *CardsPath)
+						: FString::Printf(TEXT("Knowledge index '%s' contains no cards."), *CardsPath);
+					return false;
+				}
+
+				FString IndexStatus;
+				if (!EvaluateKnowledgeIndexManifest(IndexDir, LoadedCards, true, IndexStatus, OutFailureReason))
+				{
+					SetStatus(IndexStatus);
 					return false;
 				}
 
@@ -1587,33 +2316,57 @@ namespace UnrealMcp
 					GKnowledgeCardCache.bValid = true;
 				}
 				OutCards = MoveTemp(LoadedCards);
+				SetStatus(IndexStatus);
 				return true;
 			}
 
 		double ScoreKnowledgeCard(const FKnowledgeCard& Card, const FString& Query, const TArray<FString>& QueryTokens)
 		{
 			const FString QueryLower = Query.ToLower().TrimStartAndEnd();
+			const TArray<FString> OriginalTokens = ExtractSearchTokens(Query);
+			TSet<FString> OriginalTokenSet;
+			TSet<FString> ExplicitEngineVersions;
+			for (const FString& OriginalToken : OriginalTokens)
+			{
+				OriginalTokenSet.Add(OriginalToken);
+				const FString VersionCandidate = OriginalToken.StartsWith(TEXT("ue"), ESearchCase::CaseSensitive)
+					? OriginalToken.Mid(2)
+					: OriginalToken;
+				if (IsKnowledgeVersionToken(VersionCandidate))
+				{
+					ExplicitEngineVersions.Add(VersionCandidate);
+				}
+			}
 			const FString TitleLower = Card.Title.ToLower();
 			const FString SectionLower = (Card.SectionTitle + TEXT(" ") + Card.SectionPath).ToLower();
 			const FString CategoryLower = Card.Category.ToLower();
 			const FString TextLower = Card.Text.ToLower();
 			double Score = 0.0;
+			if (!ExplicitEngineVersions.IsEmpty() && !Card.EngineVersion.IsEmpty())
+			{
+				const bool bMatchesExplicitVersion = ExplicitEngineVersions.Contains(Card.EngineVersion);
+				if (!bMatchesExplicitVersion)
+				{
+					return 0.0;
+				}
+				Score += 30.0;
+			}
 
 			if (!QueryLower.IsEmpty())
 			{
-				if (TitleLower.Contains(QueryLower))
+				if (ContainsKnowledgeSearchTerm(TitleLower, QueryLower))
 				{
 					Score += 40.0;
 				}
-				if (SectionLower.Contains(QueryLower))
+				if (ContainsKnowledgeSearchTerm(SectionLower, QueryLower))
 				{
 					Score += 28.0;
 				}
-				if (CategoryLower.Contains(QueryLower))
+				if (ContainsKnowledgeSearchTerm(CategoryLower, QueryLower))
 				{
 					Score += 16.0;
 				}
-				if (TextLower.Contains(QueryLower))
+				if (ContainsKnowledgeSearchTerm(TextLower, QueryLower))
 				{
 					Score += 20.0;
 				}
@@ -1621,28 +2374,29 @@ namespace UnrealMcp
 
 			for (const FString& Token : QueryTokens)
 			{
-				if (TitleLower.Contains(Token))
+				const double TokenWeight = OriginalTokenSet.Contains(Token) ? 1.0 : 0.55;
+				if (ContainsKnowledgeSearchTerm(TitleLower, Token))
 				{
-					Score += 12.0;
+					Score += 12.0 * TokenWeight;
 				}
-				if (SectionLower.Contains(Token))
+				if (ContainsKnowledgeSearchTerm(SectionLower, Token))
 				{
-					Score += 10.0;
+					Score += 10.0 * TokenWeight;
 				}
-				if (CategoryLower.Contains(Token))
+				if (ContainsKnowledgeSearchTerm(CategoryLower, Token))
 				{
-					Score += 8.0;
+					Score += 8.0 * TokenWeight;
 				}
 				for (const FString& Tag : Card.Tags)
 				{
-					if (Tag.ToLower().Contains(Token))
+					if (ContainsKnowledgeSearchTerm(Tag.ToLower(), Token))
 					{
-						Score += 8.0;
+						Score += 8.0 * TokenWeight;
 					}
 				}
-				if (TextLower.Contains(Token))
+				if (ContainsKnowledgeSearchTerm(TextLower, Token))
 				{
-					Score += 2.0;
+					Score += 2.0 * TokenWeight;
 				}
 			}
 			if (Score <= 0.0)
@@ -1699,8 +2453,12 @@ namespace UnrealMcp
 				Result->SetStringField(TEXT("sectionTitle"), Card.SectionTitle);
 				Result->SetStringField(TEXT("sectionPath"), Card.SectionPath);
 				Result->SetStringField(TEXT("category"), Card.Category);
-				Result->SetStringField(TEXT("sourceKind"), Card.SourceKind);
-				Result->SetStringField(TEXT("sourcePath"), Card.SourcePath);
+					Result->SetStringField(TEXT("sourceKind"), Card.SourceKind);
+					Result->SetStringField(TEXT("sourcePath"), Card.SourcePath);
+					if (!Card.EngineVersion.IsEmpty())
+					{
+						Result->SetStringField(TEXT("engineVersion"), Card.EngineVersion);
+					}
 				Result->SetStringField(TEXT("url"), Card.Url);
 				Result->SetArrayField(TEXT("tags"), StringsToJsonArray(Card.Tags));
 				Result->SetNumberField(TEXT("score"), Score);
@@ -1954,26 +2712,57 @@ namespace UnrealMcp
 
 	FUnrealMcpExecutionResult KnowledgeIndexRefresh(const FJsonObject& Arguments)
 	{
-		FString SourceRoot = GetKnowledgeSourceRoot();
-		FString IndexRoot = GetKnowledgeIndexRoot();
-		Arguments.TryGetStringField(TEXT("sourceRoot"), SourceRoot);
-		Arguments.TryGetStringField(TEXT("indexRoot"), IndexRoot);
-		SourceRoot = ResolveProjectPathForJson(SourceRoot);
-		IndexRoot = ResolveProjectPathForJson(IndexRoot);
+		FString RequestedSourceRoot;
+		FString RequestedIndexRoot;
+		Arguments.TryGetStringField(TEXT("sourceRoot"), RequestedSourceRoot);
+		Arguments.TryGetStringField(TEXT("indexRoot"), RequestedIndexRoot);
+		FString SourceRoot;
+		FString IndexRoot;
+		FString PathFailureReason;
+		if (!ResolveProjectSavedKnowledgePath(
+			RequestedSourceRoot,
+			GetKnowledgeSourceRoot(),
+			TEXT("sourceRoot"),
+			SourceRoot,
+			PathFailureReason))
+		{
+			return MakeKnowledgePathRejectedResult(
+				TEXT("knowledge_index_refresh"),
+				TEXT("sourceRoot"),
+				RequestedSourceRoot,
+				PathFailureReason);
+		}
+		if (!ResolveProjectSavedKnowledgePath(
+			RequestedIndexRoot,
+			GetKnowledgeIndexRoot(),
+			TEXT("indexRoot"),
+			IndexRoot,
+			PathFailureReason))
+		{
+			return MakeKnowledgePathRejectedResult(
+				TEXT("knowledge_index_refresh"),
+				TEXT("indexRoot"),
+				RequestedIndexRoot,
+				PathFailureReason);
+		}
 
 			bool bIncludeOfficialDocs = true;
+			bool bIncludePromotedSources = true;
 			bool bIncludeVersionedDocs = true;
 			bool bIncludeToolRegistry = true;
-			bool bIncludeActivityLog = true;
+			bool bIncludeActivityLog = false;
 			bool bIncludeSkills = true;
 			bool bSkipLowContent = true;
+			bool bAllowEmptyIndex = false;
 			bool bDryRun = false;
 			Arguments.TryGetBoolField(TEXT("includeOfficialDocs"), bIncludeOfficialDocs);
+			Arguments.TryGetBoolField(TEXT("includePromotedSources"), bIncludePromotedSources);
 			Arguments.TryGetBoolField(TEXT("includeVersionedDocs"), bIncludeVersionedDocs);
 			Arguments.TryGetBoolField(TEXT("includeToolRegistry"), bIncludeToolRegistry);
 			Arguments.TryGetBoolField(TEXT("includeActivityLog"), bIncludeActivityLog);
 			Arguments.TryGetBoolField(TEXT("includeSkills"), bIncludeSkills);
 			Arguments.TryGetBoolField(TEXT("skipLowContent"), bSkipLowContent);
+			Arguments.TryGetBoolField(TEXT("allowEmptyIndex"), bAllowEmptyIndex);
 			Arguments.TryGetBoolField(TEXT("dryRun"), bDryRun);
 
 		const int32 MaxCards = FMath::Clamp(GetPositiveIntArgument(Arguments, TEXT("maxCards"), DefaultKnowledgeMaxCards), 1, 20000);
@@ -1993,15 +2782,24 @@ namespace UnrealMcp
 
 		if (bIncludeOfficialDocs && FPaths::DirectoryExists(SourceRoot))
 		{
-			IFileManager::Get().FindFilesRecursive(SourceFiles, *SourceRoot, TEXT("documents.jsonl"), true, false);
+			FindKnowledgeFilesRecursiveNoLinks(SourceRoot, TEXT("documents.jsonl"), SourceFiles);
+			SourceFiles.RemoveAll([&SourceRoot](const FString& FilePath)
+			{
+				return !IsKnowledgePathWithinRoot(FilePath, SourceRoot);
+			});
+			SourceFiles.Sort();
 			for (const FString& DocumentsJsonlPath : SourceFiles)
 			{
-				AddDocumentationJsonlCards(DocumentsJsonlPath, MaxChunkChars, OverlapChars, bSkipLowContent, Cards, SkippedRows);
+				AddDocumentationJsonlCards(DocumentsJsonlPath, SourceRoot, MaxChunkChars, OverlapChars, bSkipLowContent, Cards, SkippedRows);
 				if (Cards.Num() >= MaxCards * 4)
 				{
 					break;
 				}
 			}
+		}
+
+		if (bIncludePromotedSources && FPaths::DirectoryExists(SourceRoot))
+		{
 			AddSourceMarkdownCards(SourceRoot, Cards, SourceMarkdownFiles, SourceMarkdownSkippedCount);
 		}
 
@@ -2025,7 +2823,10 @@ namespace UnrealMcp
 			AddActivityLogCards(MaxChunkChars, Cards, ActivityLogFileCount, ActivityEventCount);
 		}
 
+		FinalizeKnowledgeCardMetadata(Cards);
+		const int32 RawCardCount = Cards.Num();
 		DeduplicateKnowledgeCards(Cards);
+		const int32 DeduplicatedCount = RawCardCount - Cards.Num();
 		Cards.Sort([](const FKnowledgeCard& Left, const FKnowledgeCard& Right)
 		{
 			const double LeftRank = Left.SourceWeight * Left.Confidence;
@@ -2036,10 +2837,7 @@ namespace UnrealMcp
 			}
 			return Left.Title < Right.Title;
 		});
-		if (Cards.Num() > MaxCards)
-		{
-			Cards.SetNum(MaxCards);
-		}
+		const int32 TruncatedCount = TruncateKnowledgeCardsWithSourceDiversity(Cards, MaxCards);
 
 		TArray<TSharedPtr<FJsonValue>> SourceFileValues;
 		for (const FString& SourceFile : SourceFiles)
@@ -2059,7 +2857,14 @@ namespace UnrealMcp
 		StructuredContent->SetArrayField(TEXT("versionedKnowledgeRootCandidates"), MakeSharedRepoRootCandidateValues(VersionedKnowledgeRootCandidates, { TEXT("README.md"), TEXT("*.json") }));
 		StructuredContent->SetArrayField(TEXT("skillRootCandidates"), MakeSharedRepoRootCandidateValues(SkillRootCandidates, { TEXT("SKILL.md"), TEXT("*.skill") }));
 		StructuredContent->SetBoolField(TEXT("dryRun"), bDryRun);
+			StructuredContent->SetBoolField(TEXT("includePromotedSources"), bIncludePromotedSources);
+			StructuredContent->SetBoolField(TEXT("includeActivityLog"), bIncludeActivityLog);
+			StructuredContent->SetBoolField(TEXT("includeSkills"), bIncludeSkills);
+			StructuredContent->SetBoolField(TEXT("allowEmptyIndex"), bAllowEmptyIndex);
 			StructuredContent->SetNumberField(TEXT("cardCount"), Cards.Num());
+			StructuredContent->SetNumberField(TEXT("rawCardCount"), RawCardCount);
+			StructuredContent->SetNumberField(TEXT("deduplicatedCount"), DeduplicatedCount);
+			StructuredContent->SetNumberField(TEXT("truncatedCount"), TruncatedCount);
 			StructuredContent->SetNumberField(TEXT("sourceDocumentsJsonlCount"), SourceFiles.Num());
 			StructuredContent->SetNumberField(TEXT("sourceMarkdownCount"), SourceMarkdownFiles.Num());
 			StructuredContent->SetNumberField(TEXT("sourceMarkdownSkippedCount"), SourceMarkdownSkippedCount);
@@ -2072,27 +2877,54 @@ namespace UnrealMcp
 
 		if (bDryRun)
 		{
+			StructuredContent->SetStringField(TEXT("indexStatus"), Cards.IsEmpty() ? TEXT("empty") : TEXT("ready"));
 			return MakeExecutionResult(
 				FString::Printf(TEXT("Knowledge index dry run: would write %d KnowledgeCards from %d source documents.jsonl files and %d source markdown files."), Cards.Num(), SourceFiles.Num(), SourceMarkdownFiles.Num()),
 				StructuredContent,
 				false);
 		}
 
+		FString FailureReason;
 		const FString CardsPath = FPaths::Combine(IndexRoot, TEXT("cards.jsonl"));
 		const FString ManifestPath = FPaths::Combine(IndexRoot, TEXT("index.json"));
-		FString FailureReason;
-		if (!WriteKnowledgeCardsJsonl(CardsPath, Cards, FailureReason))
+		if (!ValidateKnowledgeIndexLeafPaths(IndexRoot, FailureReason))
 		{
+			StructuredContent->SetStringField(TEXT("indexStatus"), TEXT("corrupt"));
 			return MakeExecutionResult(FailureReason, StructuredContent, true);
 		}
-		InvalidateKnowledgeCardCache();
+		if (Cards.IsEmpty() && !bAllowEmptyIndex)
+		{
+			const bool bPreservedExistingIndex = IFileManager::Get().FileSize(*CardsPath) > 0;
+			StructuredContent->SetStringField(TEXT("indexStatus"), TEXT("empty"));
+			StructuredContent->SetBoolField(TEXT("preservedExistingIndex"), bPreservedExistingIndex);
+			StructuredContent->SetStringField(TEXT("recommendedNextTool"), TEXT("unreal.knowledge_index_refresh"));
+			return MakeExecutionResult(
+				TEXT("Knowledge refresh produced zero cards; the last-known-good index was preserved. Set allowEmptyIndex=true only for an intentional isolated empty index."),
+				StructuredContent,
+				true);
+		}
+
+		const FString BuildId = FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphensLower);
+		const FString GeneratedAtUtc = FDateTime::UtcNow().ToIso8601();
+		const FString CardsText = KnowledgeCardsToJsonl(Cards);
+		const FString CardsSha256 = HashUtils::Sha256LowerHexFromUtf8(CardsText);
+		const FString SourceFingerprint = ComputeKnowledgeSourceFingerprint(Cards);
 
 		TSharedPtr<FJsonObject> Manifest = MakeShared<FJsonObject>();
-		Manifest->SetStringField(TEXT("schema"), TEXT("UEvolve.KnowledgeIndex.v1"));
+		Manifest->SetStringField(TEXT("schema"), TEXT("UEvolve.KnowledgeIndex.v2"));
+		Manifest->SetStringField(TEXT("buildId"), BuildId);
+		Manifest->SetStringField(TEXT("generatedAtUtc"), GeneratedAtUtc);
 		Manifest->SetStringField(TEXT("indexRoot"), MakeProjectRelativePath(IndexRoot));
 		Manifest->SetStringField(TEXT("sourceRoot"), MakeProjectRelativePath(SourceRoot));
 		Manifest->SetStringField(TEXT("cardsPath"), MakeProjectRelativePath(CardsPath));
+		Manifest->SetStringField(TEXT("cardsSha256"), CardsSha256);
+		Manifest->SetStringField(TEXT("sourceFingerprint"), SourceFingerprint);
 			Manifest->SetNumberField(TEXT("cardCount"), Cards.Num());
+			Manifest->SetNumberField(TEXT("rawCardCount"), RawCardCount);
+			Manifest->SetNumberField(TEXT("deduplicatedCount"), DeduplicatedCount);
+			Manifest->SetNumberField(TEXT("truncatedCount"), TruncatedCount);
+			Manifest->SetObjectField(TEXT("countsBySourceKind"), MakeKnowledgeSourceKindCounts(Cards));
+			Manifest->SetObjectField(TEXT("countsByEngineVersion"), MakeKnowledgeEngineVersionCounts(Cards));
 			Manifest->SetNumberField(TEXT("sourceDocumentsJsonlCount"), SourceFiles.Num());
 			Manifest->SetNumberField(TEXT("sourceMarkdownCount"), SourceMarkdownFiles.Num());
 			Manifest->SetNumberField(TEXT("sourceMarkdownSkippedCount"), SourceMarkdownSkippedCount);
@@ -2101,17 +2933,30 @@ namespace UnrealMcp
 			Manifest->SetNumberField(TEXT("activityEventCount"), ActivityEventCount);
 			Manifest->SetNumberField(TEXT("skillFileCount"), SkillFileCount);
 			Manifest->SetBoolField(TEXT("includeOfficialDocs"), bIncludeOfficialDocs);
+			Manifest->SetBoolField(TEXT("includePromotedSources"), bIncludePromotedSources);
 			Manifest->SetBoolField(TEXT("includeVersionedDocs"), bIncludeVersionedDocs);
 			Manifest->SetBoolField(TEXT("includeToolRegistry"), bIncludeToolRegistry);
 			Manifest->SetBoolField(TEXT("includeActivityLog"), bIncludeActivityLog);
 			Manifest->SetBoolField(TEXT("includeSkills"), bIncludeSkills);
+			Manifest->SetBoolField(TEXT("allowEmptyIndex"), bAllowEmptyIndex);
+			Manifest->SetNumberField(TEXT("maxCards"), MaxCards);
+			Manifest->SetNumberField(TEXT("maxChunkChars"), MaxChunkChars);
+			Manifest->SetNumberField(TEXT("chunkOverlapChars"), OverlapChars);
 		Manifest->SetArrayField(TEXT("sourceDocumentsJsonl"), SourceFileValues);
 		Manifest->SetArrayField(TEXT("sourceMarkdown"), SourceMarkdownFileValues);
-		if (!WriteJsonObjectToFile(Manifest, ManifestPath, FailureReason))
+		const FString ManifestText = JsonObjectToCondensedString(Manifest);
+		if (!WriteKnowledgeIndexPairAtomic(CardsPath, CardsText, ManifestPath, ManifestText, FailureReason))
 		{
+			StructuredContent->SetStringField(TEXT("indexStatus"), TEXT("corrupt"));
 			return MakeExecutionResult(FailureReason, StructuredContent, true);
 		}
+		InvalidateKnowledgeCardCache();
 
+		StructuredContent->SetStringField(TEXT("buildId"), BuildId);
+		StructuredContent->SetStringField(TEXT("generatedAtUtc"), GeneratedAtUtc);
+		StructuredContent->SetStringField(TEXT("cardsSha256"), CardsSha256);
+		StructuredContent->SetStringField(TEXT("sourceFingerprint"), SourceFingerprint);
+		StructuredContent->SetStringField(TEXT("indexStatus"), Cards.IsEmpty() ? TEXT("empty") : TEXT("ready"));
 		StructuredContent->SetStringField(TEXT("cardsPath"), MakeProjectRelativePath(CardsPath));
 		StructuredContent->SetStringField(TEXT("manifestPath"), MakeProjectRelativePath(ManifestPath));
 		return MakeExecutionResult(
@@ -2128,9 +2973,23 @@ namespace UnrealMcp
 			return MakeExecutionResult(TEXT("Missing required field 'query'."), nullptr, true);
 		}
 
-		FString IndexRoot = GetKnowledgeIndexRoot();
-		Arguments.TryGetStringField(TEXT("indexRoot"), IndexRoot);
-		IndexRoot = ResolveProjectPathForJson(IndexRoot);
+		FString RequestedIndexRoot;
+		Arguments.TryGetStringField(TEXT("indexRoot"), RequestedIndexRoot);
+		FString IndexRoot;
+		FString PathFailureReason;
+		if (!ResolveProjectSavedKnowledgePath(
+			RequestedIndexRoot,
+			GetKnowledgeIndexRoot(),
+			TEXT("indexRoot"),
+			IndexRoot,
+			PathFailureReason))
+		{
+			return MakeKnowledgePathRejectedResult(
+				TEXT("knowledge_search"),
+				TEXT("indexRoot"),
+				RequestedIndexRoot,
+				PathFailureReason);
+		}
 
 		TArray<FString> Categories;
 		TryGetStringArrayField(Arguments, TEXT("categories"), Categories);
@@ -2152,11 +3011,14 @@ namespace UnrealMcp
 
 		TArray<FKnowledgeCard> Cards;
 		FString FailureReason;
-		if (!LoadKnowledgeCards(IndexRoot, Cards, FailureReason))
+		FString IndexStatus;
+		if (!LoadKnowledgeCards(IndexRoot, Cards, FailureReason, &IndexStatus))
 		{
 			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
 			StructuredContent->SetStringField(TEXT("action"), TEXT("knowledge_search"));
 			StructuredContent->SetStringField(TEXT("indexRoot"), MakeProjectRelativePath(IndexRoot));
+			StructuredContent->SetStringField(TEXT("indexStatus"), IndexStatus);
+			StructuredContent->SetStringField(TEXT("indexStatusReason"), FailureReason);
 			StructuredContent->SetStringField(TEXT("recommendedNextTool"), TEXT("unreal.knowledge_index_refresh"));
 			return MakeExecutionResult(FailureReason, StructuredContent, true);
 		}
@@ -2194,7 +3056,15 @@ namespace UnrealMcp
 			{
 				return Left.Score > Right.Score;
 			}
-			return Left.Card.Title < Right.Card.Title;
+			if (!Left.Card.Title.Equals(Right.Card.Title, ESearchCase::CaseSensitive))
+			{
+				return Left.Card.Title < Right.Card.Title;
+			}
+			if (!Left.Card.SourcePath.Equals(Right.Card.SourcePath, ESearchCase::CaseSensitive))
+			{
+				return Left.Card.SourcePath < Right.Card.SourcePath;
+			}
+			return Left.Card.CardId < Right.Card.CardId;
 		});
 
 		TArray<TSharedPtr<FJsonValue>> ResultValues;
@@ -2245,6 +3115,11 @@ namespace UnrealMcp
 		StructuredContent->SetStringField(TEXT("action"), TEXT("knowledge_search"));
 		StructuredContent->SetStringField(TEXT("query"), Query);
 		StructuredContent->SetStringField(TEXT("indexRoot"), MakeProjectRelativePath(IndexRoot));
+		StructuredContent->SetStringField(TEXT("indexStatus"), IndexStatus);
+		if (!FailureReason.IsEmpty())
+		{
+			StructuredContent->SetStringField(TEXT("indexStatusReason"), FailureReason);
+		}
 		StructuredContent->SetNumberField(TEXT("cardCount"), Cards.Num());
 		StructuredContent->SetNumberField(TEXT("matchCount"), ScoredCards.Num());
 		StructuredContent->SetNumberField(TEXT("resultCount"), ResultCount);
@@ -2309,7 +3184,15 @@ namespace UnrealMcp
 			{
 				return Left.Score > Right.Score;
 			}
-			return Left.Card.Title < Right.Card.Title;
+			if (!Left.Card.Title.Equals(Right.Card.Title, ESearchCase::CaseSensitive))
+			{
+				return Left.Card.Title < Right.Card.Title;
+			}
+			if (!Left.Card.SourcePath.Equals(Right.Card.SourcePath, ESearchCase::CaseSensitive))
+			{
+				return Left.Card.SourcePath < Right.Card.SourcePath;
+			}
+			return Left.Card.CardId < Right.Card.CardId;
 		});
 
 		TSet<FString> AddedSourceGroups;
@@ -2329,6 +3212,10 @@ namespace UnrealMcp
 			EvidenceObject->SetStringField(TEXT("cardId"), Scored.Card.CardId);
 			EvidenceObject->SetStringField(TEXT("sourcePath"), Scored.Card.SourcePath);
 			EvidenceObject->SetStringField(TEXT("sourceKind"), Scored.Card.SourceKind);
+			if (!Scored.Card.EngineVersion.IsEmpty())
+			{
+				EvidenceObject->SetStringField(TEXT("engineVersion"), Scored.Card.EngineVersion);
+			}
 			EvidenceObject->SetStringField(TEXT("excerpt"), MakeExcerpt(Scored.Card.Text, Query, QueryTokens, SafeMaxExcerptChars));
 			EvidenceObject->SetNumberField(TEXT("score"), Scored.Score);
 			EvidenceObject->SetStringField(TEXT("queryUsed"), Query);
@@ -2343,8 +3230,10 @@ namespace UnrealMcp
 		const FString& Text,
 		const FString& SourcePath,
 		const TArray<FString>& Tags,
-		FString& OutFailureReason)
+		FString& OutFailureReason,
+		const FString& IndexRootOverride)
 	{
+		OutFailureReason.Reset();
 		const FString CleanSessionId = ManifestSessionId.TrimStartAndEnd();
 		if (CleanSessionId.IsEmpty())
 		{
@@ -2353,31 +3242,49 @@ namespace UnrealMcp
 		}
 
 		const FString SourceId = SanitizeKnowledgeId(FString::Printf(TEXT("outcome_%s"), *CleanSessionId));
-		const FString CardsPath = FPaths::Combine(GetKnowledgeIndexRoot(), TEXT("cards.jsonl"));
-		TArray<FKnowledgeCard> Cards;
-		if (IFileManager::Get().FileSize(*CardsPath) >= 0)
+		FString IndexRoot;
+		if (!ResolveProjectSavedKnowledgePath(
+			IndexRootOverride,
+			GetKnowledgeIndexRoot(),
+			TEXT("indexRoot"),
+			IndexRoot,
+			OutFailureReason))
 		{
-			TArray<FString> Lines;
-			if (!FFileHelper::LoadFileToStringArray(Lines, *CardsPath))
+			return false;
+		}
+		const FString CardsPath = FPaths::Combine(IndexRoot, TEXT("cards.jsonl"));
+		const FString ManifestPath = FPaths::Combine(IndexRoot, TEXT("index.json"));
+		if (!ValidateKnowledgeIndexLeafPaths(IndexRoot, OutFailureReason))
+		{
+			return false;
+		}
+		const bool bCardsExist = IFileManager::Get().FileSize(*CardsPath) >= 0;
+		if (!bCardsExist && FPaths::FileExists(ManifestPath))
+		{
+			OutFailureReason = TEXT("Cannot append an outcome card because index.json exists without cards.jsonl; refresh the knowledge index first.");
+			return false;
+		}
+
+		TArray<FKnowledgeCard> Cards;
+		if (bCardsExist)
+		{
+			FString IndexStatus;
+			if (!LoadKnowledgeCards(IndexRoot, Cards, OutFailureReason, &IndexStatus))
 			{
-				OutFailureReason = FString::Printf(TEXT("Failed to read knowledge cards '%s'."), *CardsPath);
 				return false;
 			}
-			for (const FString& Line : Lines)
+			if (!IndexStatus.Equals(TEXT("ready"), ESearchCase::CaseSensitive))
 			{
-				if (Line.TrimStartAndEnd().IsEmpty())
+				OutFailureReason = FString::Printf(
+					TEXT("Cannot append an outcome card to a %s knowledge index; refresh it first."),
+					*IndexStatus);
+				return false;
+			}
+			for (const FKnowledgeCard& ExistingCard : Cards)
+			{
+				if (ExistingCard.SourceId.Equals(SourceId, ESearchCase::CaseSensitive))
 				{
-					continue;
-				}
-				TSharedPtr<FJsonObject> Object;
-				FKnowledgeCard ExistingCard;
-				if (LoadJsonObjectFromString(Line, Object) && JsonObjectToCard(Object, ExistingCard))
-				{
-					if (ExistingCard.SourceId.Equals(SourceId, ESearchCase::CaseSensitive))
-					{
-						return true;
-					}
-					Cards.Add(MoveTemp(ExistingCard));
+					return true;
 				}
 			}
 		}
@@ -2412,8 +3319,58 @@ namespace UnrealMcp
 		Card.Confidence = 0.7;
 		Card.UpdatedAt = FDateTime::UtcNow().ToIso8601();
 		Cards.Add(MoveTemp(Card));
+		FinalizeKnowledgeCardMetadata(Cards);
 
-		if (!WriteKnowledgeCardsJsonl(CardsPath, Cards, OutFailureReason))
+		TSharedPtr<FJsonObject> Manifest = MakeShared<FJsonObject>();
+		if (bCardsExist)
+		{
+			FString ExistingManifestText;
+			if (!FFileHelper::LoadFileToString(ExistingManifestText, *ManifestPath)
+				|| !LoadJsonObjectFromString(ExistingManifestText, Manifest))
+			{
+				OutFailureReason = FString::Printf(TEXT("Failed to read knowledge index manifest '%s'."), *ManifestPath);
+				return false;
+			}
+		}
+
+		const FString BuildId = FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphensLower);
+		const FString GeneratedAtUtc = FDateTime::UtcNow().ToIso8601();
+		const FString CardsText = KnowledgeCardsToJsonl(Cards);
+		const FString CardsSha256 = HashUtils::Sha256LowerHexFromUtf8(CardsText);
+		const FString SourceFingerprint = ComputeKnowledgeSourceFingerprint(Cards);
+		double PreviousRawCardCount = static_cast<double>(Cards.Num() - 1);
+		Manifest->TryGetNumberField(TEXT("rawCardCount"), PreviousRawCardCount);
+		double OutcomeAppendCount = 0.0;
+		Manifest->TryGetNumberField(TEXT("outcomeAppendCount"), OutcomeAppendCount);
+
+		Manifest->SetStringField(TEXT("schema"), TEXT("UEvolve.KnowledgeIndex.v2"));
+		Manifest->SetStringField(TEXT("buildId"), BuildId);
+		Manifest->SetStringField(TEXT("generatedAtUtc"), GeneratedAtUtc);
+		Manifest->SetStringField(TEXT("indexRoot"), MakeProjectRelativePath(IndexRoot));
+		if (!Manifest->HasField(TEXT("sourceRoot")))
+		{
+			Manifest->SetStringField(TEXT("sourceRoot"), MakeProjectRelativePath(GetKnowledgeSourceRoot()));
+		}
+		Manifest->SetStringField(TEXT("cardsPath"), MakeProjectRelativePath(CardsPath));
+		Manifest->SetStringField(TEXT("cardsSha256"), CardsSha256);
+		Manifest->SetStringField(TEXT("sourceFingerprint"), SourceFingerprint);
+		Manifest->SetStringField(TEXT("lastMutation"), TEXT("outcome_append"));
+		Manifest->SetNumberField(TEXT("cardCount"), Cards.Num());
+		Manifest->SetNumberField(TEXT("rawCardCount"), FMath::Max(static_cast<double>(Cards.Num()), PreviousRawCardCount + 1.0));
+		Manifest->SetNumberField(TEXT("outcomeAppendCount"), OutcomeAppendCount + 1.0);
+		Manifest->SetObjectField(TEXT("countsBySourceKind"), MakeKnowledgeSourceKindCounts(Cards));
+		Manifest->SetObjectField(TEXT("countsByEngineVersion"), MakeKnowledgeEngineVersionCounts(Cards));
+		if (!Manifest->HasField(TEXT("deduplicatedCount")))
+		{
+			Manifest->SetNumberField(TEXT("deduplicatedCount"), 0.0);
+		}
+		if (!Manifest->HasField(TEXT("truncatedCount")))
+		{
+			Manifest->SetNumberField(TEXT("truncatedCount"), 0.0);
+		}
+
+		const FString ManifestText = JsonObjectToCondensedString(Manifest);
+		if (!WriteKnowledgeIndexPairAtomic(CardsPath, CardsText, ManifestPath, ManifestText, OutFailureReason))
 		{
 			return false;
 		}
@@ -2436,18 +3393,40 @@ namespace UnrealMcp
 		bool bIncludeWorkflowDraft = true;
 		Arguments.TryGetBoolField(TEXT("includeKnowledge"), bIncludeKnowledge);
 		Arguments.TryGetBoolField(TEXT("includeWorkflowDraft"), bIncludeWorkflowDraft);
+		FString RequestedIndexRoot;
+		Arguments.TryGetStringField(TEXT("indexRoot"), RequestedIndexRoot);
+		FString IndexRoot;
+		FString PathFailureReason;
+		if (!ResolveProjectSavedKnowledgePath(
+			RequestedIndexRoot,
+			GetKnowledgeIndexRoot(),
+			TEXT("indexRoot"),
+			IndexRoot,
+			PathFailureReason))
+		{
+			return MakeKnowledgePathRejectedResult(
+				TEXT("tool_recommend"),
+				TEXT("indexRoot"),
+				RequestedIndexRoot,
+				PathFailureReason);
+		}
 
 		const TArray<FToolRecommendationCandidate> ScoredTools = FindToolRecommendations(Task, RiskMax);
 		TArray<TSharedPtr<FJsonValue>> RecommendationValues = MakeRecommendationValues(ScoredTools, Limit);
 
 		TArray<TSharedPtr<FJsonValue>> KnowledgeValues;
 		FString KnowledgeNote;
+		FString KnowledgeIndexStatus = bIncludeKnowledge ? TEXT("missing") : TEXT("not_requested");
 		if (bIncludeKnowledge)
 		{
 			TArray<FKnowledgeCard> Cards;
 			FString FailureReason;
-			if (LoadKnowledgeCards(GetKnowledgeIndexRoot(), Cards, FailureReason))
+			if (LoadKnowledgeCards(IndexRoot, Cards, FailureReason, &KnowledgeIndexStatus))
 			{
+				if (KnowledgeIndexStatus.Equals(TEXT("stale"), ESearchCase::CaseSensitive))
+				{
+					KnowledgeNote = FailureReason;
+				}
 				const TArray<FString> QueryTokens = ExpandSearchTokens(Task);
 				struct FScoredCard
 				{
@@ -2468,7 +3447,19 @@ namespace UnrealMcp
 				}
 				ScoredCards.Sort([](const FScoredCard& Left, const FScoredCard& Right)
 				{
-					return Left.Score > Right.Score;
+					if (!FMath::IsNearlyEqual(Left.Score, Right.Score))
+					{
+						return Left.Score > Right.Score;
+					}
+					if (!Left.Card.Title.Equals(Right.Card.Title, ESearchCase::CaseSensitive))
+					{
+						return Left.Card.Title < Right.Card.Title;
+					}
+					if (!Left.Card.SourcePath.Equals(Right.Card.SourcePath, ESearchCase::CaseSensitive))
+					{
+						return Left.Card.SourcePath < Right.Card.SourcePath;
+					}
+					return Left.Card.CardId < Right.Card.CardId;
 				});
 				TSet<FString> AddedKnowledgeGroups;
 				for (int32 Index = 0; Index < ScoredCards.Num() && KnowledgeValues.Num() < 3; ++Index)
@@ -2486,6 +3477,10 @@ namespace UnrealMcp
 					CardObject->SetStringField(TEXT("sectionTitle"), ScoredCards[Index].Card.SectionTitle);
 					CardObject->SetStringField(TEXT("category"), ScoredCards[Index].Card.Category);
 					CardObject->SetStringField(TEXT("sourcePath"), ScoredCards[Index].Card.SourcePath);
+					if (!ScoredCards[Index].Card.EngineVersion.IsEmpty())
+					{
+						CardObject->SetStringField(TEXT("engineVersion"), ScoredCards[Index].Card.EngineVersion);
+					}
 					CardObject->SetStringField(TEXT("excerpt"), MakeExcerpt(ScoredCards[Index].Card.Text, Task, QueryTokens, 320));
 					CardObject->SetNumberField(TEXT("score"), ScoredCards[Index].Score);
 					KnowledgeValues.Add(MakeShared<FJsonValueObject>(CardObject));
@@ -2529,6 +3524,8 @@ namespace UnrealMcp
 		StructuredContent->SetStringField(TEXT("action"), TEXT("tool_recommend"));
 		StructuredContent->SetStringField(TEXT("task"), Task);
 		StructuredContent->SetStringField(TEXT("riskMax"), RiskMax);
+		StructuredContent->SetStringField(TEXT("indexRoot"), MakeProjectRelativePath(IndexRoot));
+		StructuredContent->SetStringField(TEXT("indexStatus"), KnowledgeIndexStatus);
 		StructuredContent->SetNumberField(TEXT("visibleToolDefinitionCount"), ToolsArray.Num());
 		StructuredContent->SetArrayField(TEXT("recommendations"), RecommendationValues);
 		StructuredContent->SetArrayField(TEXT("knowledgeCards"), KnowledgeValues);
@@ -2776,12 +3773,70 @@ namespace UnrealMcp
 	FUnrealMcpExecutionResult KnowledgeEvalRun(const FJsonObject& Arguments, const TArray<TSharedPtr<FJsonValue>>& ToolsArray)
 	{
 		TArray<FString> EvalPathCandidates;
+		FString EvalPathArgument;
+		const bool bHasExplicitEvalPath = Arguments.TryGetStringField(TEXT("evalPath"), EvalPathArgument)
+			&& !EvalPathArgument.TrimStartAndEnd().IsEmpty();
 		FString EvalPath;
-		if (!Arguments.TryGetStringField(TEXT("evalPath"), EvalPath) || EvalPath.TrimStartAndEnd().IsEmpty())
+		if (!bHasExplicitEvalPath)
 		{
 			ResolveSharedRepoRoot(TEXT("UnrealMcpKnowledge/Evals"), { TEXT("*.json") }, EvalPath, EvalPathCandidates);
 		}
+		else
+		{
+			EvalPathArgument.TrimStartAndEndInline();
+			EvalPath = ResolveProjectPathForJson(EvalPathArgument);
+
+			FString NormalizedEvalPathArgument = EvalPathArgument;
+			FPaths::NormalizeDirectoryName(NormalizedEvalPathArgument);
+			const bool bProjectRelativePathMissing = FPaths::IsRelative(EvalPathArgument)
+				&& !FPaths::DirectoryExists(EvalPath)
+				&& !FPaths::FileExists(EvalPath);
+			if (bProjectRelativePathMissing
+				&& NormalizedEvalPathArgument.Equals(TEXT("Tools/UnrealMcpKnowledge/Evals"), ESearchCase::IgnoreCase))
+			{
+				ResolveSharedRepoRoot(TEXT("UnrealMcpKnowledge/Evals"), { TEXT("*.json") }, EvalPath, EvalPathCandidates);
+			}
+		}
 		EvalPath = ResolveProjectPathForJson(EvalPath);
+		TArray<FString> AllowedEvalPathCandidates;
+		FString SharedEvalRoot;
+		ResolveSharedRepoRoot(
+			TEXT("UnrealMcpKnowledge/Evals"),
+			{ TEXT("*.json") },
+			SharedEvalRoot,
+			AllowedEvalPathCandidates);
+		if (!IsKnowledgePathWithinRoot(EvalPath, FPaths::ProjectDir())
+			&& !IsKnowledgePathWithinRoot(EvalPath, SharedEvalRoot))
+		{
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("action"), TEXT("knowledge_eval_run"));
+			StructuredContent->SetStringField(TEXT("rejectedField"), TEXT("evalPath"));
+			StructuredContent->SetStringField(TEXT("requestedPath"), EvalPathArgument);
+			StructuredContent->SetStringField(TEXT("allowedProjectRoot"), NormalizePathForJson(FPaths::ProjectDir()));
+			StructuredContent->SetStringField(TEXT("allowedSharedEvalRoot"), SharedEvalRoot);
+			return MakeExecutionResult(
+				TEXT("Knowledge evalPath must resolve inside the current project or the shared UnrealMcpKnowledge/Evals root."),
+				StructuredContent,
+				true);
+		}
+
+		FString RequestedIndexRoot;
+		Arguments.TryGetStringField(TEXT("indexRoot"), RequestedIndexRoot);
+		FString IndexRoot;
+		FString PathFailureReason;
+		if (!ResolveProjectSavedKnowledgePath(
+			RequestedIndexRoot,
+			GetKnowledgeIndexRoot(),
+			TEXT("indexRoot"),
+			IndexRoot,
+			PathFailureReason))
+		{
+			return MakeKnowledgePathRejectedResult(
+				TEXT("knowledge_eval_run"),
+				TEXT("indexRoot"),
+				RequestedIndexRoot,
+				PathFailureReason);
+		}
 
 		bool bRefreshIndex = false;
 		bool bIncludeDetails = true;
@@ -2792,7 +3847,11 @@ namespace UnrealMcp
 		TArray<FString> EvalFiles;
 		if (FPaths::DirectoryExists(EvalPath))
 		{
-			IFileManager::Get().FindFilesRecursive(EvalFiles, *EvalPath, TEXT("*.json"), true, false);
+			FindKnowledgeFilesRecursiveNoLinks(EvalPath, TEXT("*.json"), EvalFiles);
+			EvalFiles.RemoveAll([&EvalPath](const FString& FilePath)
+			{
+				return !IsKnowledgePathWithinRoot(FilePath, EvalPath);
+			});
 			EvalFiles.Sort();
 		}
 		else if (FPaths::FileExists(EvalPath))
@@ -2814,10 +3873,14 @@ namespace UnrealMcp
 		if (bRefreshIndex)
 		{
 			TSharedPtr<FJsonObject> RefreshArguments = MakeShared<FJsonObject>();
-			RefreshArguments->SetBoolField(TEXT("includeOfficialDocs"), true);
+			RefreshArguments->SetBoolField(TEXT("includeOfficialDocs"), false);
+			RefreshArguments->SetBoolField(TEXT("includePromotedSources"), false);
 			RefreshArguments->SetBoolField(TEXT("includeVersionedDocs"), true);
 			RefreshArguments->SetBoolField(TEXT("includeToolRegistry"), true);
+			RefreshArguments->SetBoolField(TEXT("includeActivityLog"), false);
+			RefreshArguments->SetBoolField(TEXT("includeSkills"), true);
 			RefreshArguments->SetBoolField(TEXT("skipLowContent"), true);
+			RefreshArguments->SetStringField(TEXT("indexRoot"), IndexRoot);
 			const FUnrealMcpExecutionResult RefreshResult = KnowledgeIndexRefresh(*RefreshArguments);
 			if (RefreshResult.bIsError)
 			{
@@ -2878,6 +3941,22 @@ namespace UnrealMcp
 			return ExpectedValues.IsEmpty();
 		};
 
+		auto JsonArrayStringFieldAtRank = [](
+			const TArray<TSharedPtr<FJsonValue>>* Values,
+			const FString& FieldName,
+			int32 OneBasedRank,
+			FString& OutValue)
+		{
+			OutValue.Reset();
+			const int32 Index = OneBasedRank - 1;
+			if (!Values || !Values->IsValidIndex(Index))
+			{
+				return false;
+			}
+			const TSharedPtr<FJsonObject> Object = (*Values)[Index].IsValid() ? (*Values)[Index]->AsObject() : nullptr;
+			return Object.IsValid() && Object->TryGetStringField(FieldName, OutValue);
+		};
+
 		auto WorkflowStepsContainTool = [](const TSharedPtr<FJsonObject>& Root, const FString& ExpectedTool)
 		{
 			if (!Root.IsValid())
@@ -2914,6 +3993,8 @@ namespace UnrealMcp
 		int32 PassedCount = 0;
 		int32 FailedCount = 0;
 		int32 FileCount = 0;
+		int32 RankAssertionCount = 0;
+		int32 RankAssertionPassedCount = 0;
 
 		auto EvaluateCase = [&](const TSharedPtr<FJsonObject>& CaseObject, const FString& SourceFile)
 		{
@@ -2946,6 +4027,7 @@ namespace UnrealMcp
 				SearchArgs->SetStringField(TEXT("query"), Query);
 				SearchArgs->SetNumberField(TEXT("limit"), static_cast<double>(Limit));
 				SearchArgs->SetBoolField(TEXT("includeText"), false);
+				SearchArgs->SetStringField(TEXT("indexRoot"), IndexRoot);
 				TArray<FString> SearchSourceKinds;
 				if (TryGetStringArrayOrSingle(CaseObject, TEXT("sourceKinds"), SearchSourceKinds))
 				{
@@ -2971,6 +4053,85 @@ namespace UnrealMcp
 					&& !JsonArrayHasAnyStringField(Results, TEXT("sourceKind"), ExpectedSourceKinds))
 				{
 					Failures.Add(TEXT("Expected at least one matching sourceKind."));
+				}
+
+				TArray<FString> ExpectedSourcePathsAtK;
+				if (TryGetStringArrayOrSingle(CaseObject, TEXT("expectSourcePathsAtK"), ExpectedSourcePathsAtK))
+				{
+					for (int32 Index = 0; Index < ExpectedSourcePathsAtK.Num(); ++Index)
+					{
+						FString ActualSourcePath;
+						const bool bPassed = JsonArrayStringFieldAtRank(Results, TEXT("sourcePath"), Index + 1, ActualSourcePath)
+							&& ActualSourcePath.Contains(ExpectedSourcePathsAtK[Index], ESearchCase::IgnoreCase);
+						RankAssertionCount++;
+						if (bPassed)
+						{
+							RankAssertionPassedCount++;
+						}
+						else
+						{
+							Failures.Add(FString::Printf(
+								TEXT("Expected sourcePath containing '%s' at rank %d, got '%s'."),
+								*ExpectedSourcePathsAtK[Index],
+								Index + 1,
+								*ActualSourcePath));
+						}
+					}
+				}
+
+				TArray<FString> ForbiddenTopSourcePaths;
+				if (TryGetStringArrayOrSingle(CaseObject, TEXT("forbidTopSourcePathContains"), ForbiddenTopSourcePaths))
+				{
+					FString TopSourcePath;
+					JsonArrayStringFieldAtRank(Results, TEXT("sourcePath"), 1, TopSourcePath);
+					for (const FString& ForbiddenPath : ForbiddenTopSourcePaths)
+					{
+						const bool bPassed = !TopSourcePath.Contains(ForbiddenPath, ESearchCase::IgnoreCase);
+						RankAssertionCount++;
+						if (bPassed)
+						{
+							RankAssertionPassedCount++;
+						}
+						else
+						{
+							Failures.Add(FString::Printf(
+								TEXT("Forbidden sourcePath '%s' appeared at rank 1."),
+								*ForbiddenPath));
+						}
+					}
+				}
+
+				TArray<FString> ExpectedAnySourcePaths;
+				if (TryGetStringArrayOrSingle(CaseObject, TEXT("expectAnySourcePathContains"), ExpectedAnySourcePaths))
+				{
+					for (const FString& ExpectedPath : ExpectedAnySourcePaths)
+					{
+						bool bFound = false;
+						if (Results)
+						{
+							for (const TSharedPtr<FJsonValue>& Value : *Results)
+							{
+								FString ActualSourcePath;
+								const TSharedPtr<FJsonObject> Object = Value.IsValid() ? Value->AsObject() : nullptr;
+								if (Object.IsValid()
+									&& Object->TryGetStringField(TEXT("sourcePath"), ActualSourcePath)
+									&& ActualSourcePath.Contains(ExpectedPath, ESearchCase::IgnoreCase))
+								{
+									bFound = true;
+									break;
+								}
+							}
+						}
+						RankAssertionCount++;
+						if (bFound)
+						{
+							RankAssertionPassedCount++;
+						}
+						else
+						{
+							Failures.Add(FString::Printf(TEXT("Expected a sourcePath containing '%s'."), *ExpectedPath));
+						}
+					}
 				}
 
 				// Search eval extension keys:
@@ -3022,6 +4183,7 @@ namespace UnrealMcp
 				RecommendArgs->SetNumberField(TEXT("limit"), static_cast<double>(Limit));
 				RecommendArgs->SetBoolField(TEXT("includeKnowledge"), true);
 				RecommendArgs->SetBoolField(TEXT("includeWorkflowDraft"), true);
+				RecommendArgs->SetStringField(TEXT("indexRoot"), IndexRoot);
 				Result = ToolRecommend(*RecommendArgs, ToolsArray);
 
 				const TArray<TSharedPtr<FJsonValue>>* Recommendations = nullptr;
@@ -3035,6 +4197,30 @@ namespace UnrealMcp
 					&& !JsonArrayHasAnyStringField(Recommendations, TEXT("toolName"), ExpectedAnyTools))
 				{
 					Failures.Add(TEXT("Expected at least one specific recommended tool."));
+				}
+
+				FString ExpectedToolAtRank;
+				if (CaseObject->TryGetStringField(TEXT("expectToolAtRank"), ExpectedToolAtRank) && !ExpectedToolAtRank.IsEmpty())
+				{
+					double RankValue = 1.0;
+					CaseObject->TryGetNumberField(TEXT("expectToolRank"), RankValue);
+					const int32 ExpectedRank = FMath::Max(1, static_cast<int32>(RankValue));
+					FString ActualTool;
+					const bool bPassed = JsonArrayStringFieldAtRank(Recommendations, TEXT("toolName"), ExpectedRank, ActualTool)
+						&& ActualTool.Equals(ExpectedToolAtRank, ESearchCase::IgnoreCase);
+					RankAssertionCount++;
+					if (bPassed)
+					{
+						RankAssertionPassedCount++;
+					}
+					else
+					{
+						Failures.Add(FString::Printf(
+							TEXT("Expected tool '%s' at rank %d, got '%s'."),
+							*ExpectedToolAtRank,
+							ExpectedRank,
+							*ActualTool));
+					}
 				}
 			}
 			else if (Type.Equals(TEXT("tool_gap_analyze"), ESearchCase::IgnoreCase))
@@ -3158,6 +4344,7 @@ namespace UnrealMcp
 		TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
 		StructuredContent->SetStringField(TEXT("action"), TEXT("knowledge_eval_run"));
 		StructuredContent->SetStringField(TEXT("evalPath"), MakeProjectRelativePath(EvalPath));
+		StructuredContent->SetStringField(TEXT("indexRoot"), MakeProjectRelativePath(IndexRoot));
 		if (EvalPathCandidates.Num() > 0)
 		{
 			StructuredContent->SetArrayField(TEXT("evalPathCandidates"), MakeSharedRepoRootCandidateValues(EvalPathCandidates, { TEXT("*.json") }));
@@ -3166,6 +4353,11 @@ namespace UnrealMcp
 		StructuredContent->SetNumberField(TEXT("caseCount"), CaseCount);
 		StructuredContent->SetNumberField(TEXT("passedCount"), PassedCount);
 		StructuredContent->SetNumberField(TEXT("failedCount"), FailedCount);
+		StructuredContent->SetNumberField(TEXT("rankAssertionCount"), RankAssertionCount);
+		StructuredContent->SetNumberField(TEXT("rankAssertionPassedCount"), RankAssertionPassedCount);
+		StructuredContent->SetNumberField(
+			TEXT("rankAssertionPassRate"),
+			RankAssertionCount > 0 ? static_cast<double>(RankAssertionPassedCount) / static_cast<double>(RankAssertionCount) : 0.0);
 		StructuredContent->SetNumberField(TEXT("passRate"), CaseCount > 0 ? static_cast<double>(PassedCount) / static_cast<double>(CaseCount) : 0.0);
 		StructuredContent->SetArrayField(TEXT("cases"), CaseResultValues);
 

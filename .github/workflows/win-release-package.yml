@@ -5,8 +5,14 @@ name: Windows Release Package
 # Replaces the manual Edwin-on-Windows workflow that produced v0.12 - v0.21.1
 # Windows zips.
 #
-# Manual trigger via workflow_dispatch is also supported for re-runs or
-# back-filling Windows zips on older tags.
+# This job validates artifact shape only: the runner has no UE installation and
+# does not run UBT. For v0.35, real Windows UE 5.7 and UE 5.8 UBT plus clean-
+# project endpoint/MCP SDK conformance smoke must pass before the tag is pushed.
+#
+# Manual trigger via workflow_dispatch is also supported for release re-runs,
+# back-filling Windows zips, or artifact-only candidates from an exact branch
+# SHA. Artifact discovery accepts the engine suffix emitted by the selected
+# revision's own packager.
 
 on:
   push:
@@ -15,7 +21,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g. v0.22.0) to (re-)package. Defaults to the current tag if push-triggered.'
+        description: 'Release tag (e.g. v0.35.0) to (re-)package. Leave blank to package the selected workflow ref as an artifact-only candidate.'
         required: false
         default: ''
 
@@ -28,32 +34,75 @@ jobs:
     runs-on: windows-2022
 
     steps:
-      - name: Resolve target tag
-        id: tag
+      - name: Resolve checkout target
+        id: target
         shell: pwsh
         run: |
-          if ($env:GITHUB_REF -like 'refs/tags/*') {
-            $tag = $env:GITHUB_REF -replace '^refs/tags/', ''
-          } elseif ($env:DISPATCH_TAG -ne '' -and $env:DISPATCH_TAG -ne $null) {
-            $tag = $env:DISPATCH_TAG
+          $eventName = [string]$env:GITHUB_EVENT_NAME
+          $dispatchTag = ([string]$env:DISPATCH_TAG).Trim()
+          $tag = ""
+
+          if ($eventName -eq "push") {
+            if ($env:GITHUB_REF -notlike "refs/tags/*") {
+              throw "Push trigger is not a tag ref: $env:GITHUB_REF"
+            }
+            $tag = $env:GITHUB_REF -replace "^refs/tags/", ""
+          } elseif ($eventName -eq "workflow_dispatch") {
+            if (-not [string]::IsNullOrWhiteSpace($dispatchTag)) {
+              $tag = $dispatchTag
+            }
           } else {
-            Write-Error "No tag specified — push-trigger has no tag ref and workflow_dispatch input was empty."
-            exit 1
+            throw "Unsupported event: $eventName"
           }
-          $version = $tag -replace '^v', ''
-          Write-Host "Target tag: $tag"
-          Write-Host "Version string: $version"
-          "tag=$tag"         | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+          if ([string]::IsNullOrWhiteSpace($tag)) {
+            $checkoutRef = [string]$env:GITHUB_SHA
+            Write-Host "Candidate mode: checkout exact workflow SHA $checkoutRef"
+          } else {
+            $checkoutRef = $tag
+            Write-Host "Release mode: checkout tag $tag"
+          }
+
+          if ([string]::IsNullOrWhiteSpace($checkoutRef)) {
+            throw "Resolved checkout ref is empty."
+          }
+
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "checkout_ref=$checkoutRef" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
         env:
           DISPATCH_TAG: ${{ inputs.tag }}
 
-      - name: Checkout repository at tag
+      - name: Checkout target revision
         uses: actions/checkout@v4
         with:
-          ref: ${{ steps.tag.outputs.tag }}
+          ref: ${{ steps.target.outputs.checkout_ref }}
           fetch-depth: 1
           lfs: false
+
+      - name: Resolve and validate package version
+        id: version
+        shell: pwsh
+        run: |
+          $descriptorPath = "Plugins/UnrealMcp/UnrealMcp.uplugin"
+          $descriptor = Get-Content -LiteralPath $descriptorPath -Raw | ConvertFrom-Json
+          $version = [string]$descriptor.VersionName
+
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            throw "UnrealMcp.uplugin has no VersionName."
+          }
+
+          $tag = [string]$env:TARGET_TAG
+          if (-not [string]::IsNullOrWhiteSpace($tag)) {
+            $tagVersion = $tag -replace "^v", ""
+            if ($tagVersion -ne $version) {
+              throw "Tag '$tag' does not match UnrealMcp.uplugin VersionName '$version'."
+            }
+          }
+
+          Write-Host "Package version: $version"
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+        env:
+          TARGET_TAG: ${{ steps.target.outputs.tag }}
 
       - name: Enable Windows long paths
         shell: pwsh
@@ -79,6 +128,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "validate_tool_registry.py failed" }
           python Tools/check_ue56_compat.py
           if ($LASTEXITCODE -ne 0) { throw "check_ue56_compat.py failed" }
+          # This historically named validator protects the UE 5.6 maintenance
+          # floor and compat-shim discipline; it is not a primary-engine build.
           # Skip verify_package_integrity --root in pre-package: it requires
           # Tools/UnrealMcpToolScaffolds/<id>/... working-copy paths that a
           # clean CI checkout doesn't have (gitignored). The packager itself
@@ -88,10 +139,18 @@ jobs:
       - name: Run package_plugin.ps1
         id: package
         shell: pwsh
+        env:
+          PACKAGE_VERSION: ${{ steps.version.outputs.version }}
         run: |
-          pwsh -File Tools/package_plugin.ps1 -Version ${{ steps.tag.outputs.version }}
+          $version = $env:PACKAGE_VERSION
+          pwsh -File Tools/package_plugin.ps1 -Version $version
           if ($LASTEXITCODE -ne 0) { throw "package_plugin.ps1 failed" }
-          $zipPath = "Saved/UnrealMcp/Packages/UnrealMcp-v${{ steps.tag.outputs.version }}-win-ue56-ue57-projectroot.zip"
+          $packageDir = "Saved/UnrealMcp/Packages"
+          $zipCandidates = @(Get-ChildItem -LiteralPath $packageDir -Filter "UnrealMcp-v$version-win-*-projectroot.zip" -File)
+          if ($zipCandidates.Count -ne 1) {
+            throw "Expected exactly one Windows source zip in $packageDir, found $($zipCandidates.Count)."
+          }
+          $zipPath = $zipCandidates[0].FullName
           $shaPath = "$zipPath.sha256"
           if (-not (Test-Path -LiteralPath $zipPath)) {
             throw "Expected zip not found: $zipPath"
@@ -117,18 +176,20 @@ jobs:
         # fails (e.g. release doesn't exist yet for a fresh tag).
         uses: actions/upload-artifact@v4
         with:
-          name: UnrealMcp-${{ steps.tag.outputs.tag }}-win-zip
+          name: UnrealMcp-v${{ steps.version.outputs.version }}-win-zip
           path: |
             ${{ steps.package.outputs.zip_path }}
             ${{ steps.package.outputs.sha_path }}
           retention-days: 30
 
       - name: Attach to GitHub release (best-effort)
+        if: steps.target.outputs.tag != ''
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_TAG: ${{ steps.target.outputs.tag }}
         run: |
-          $tag = "${{ steps.tag.outputs.tag }}"
+          $tag = $env:TARGET_TAG
           $zip = "${{ steps.package.outputs.zip_path }}"
           $sha = "${{ steps.package.outputs.sha_path }}"
 

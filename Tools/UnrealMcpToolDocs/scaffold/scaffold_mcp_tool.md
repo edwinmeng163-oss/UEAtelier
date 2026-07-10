@@ -4,7 +4,7 @@
 **Title**: Scaffold MCP Tool
 **Risk level**: medium
 
-Generates a project-local Python user-tool scaffold for AI self-extension. Core C++ scaffolds remain a manual/developer-only path hidden from the AI.
+Generates a project-local Python user-tool scaffold for AI self-extension; core C++ scaffolds are manual/developer-only.
 
 ## Capabilities
 

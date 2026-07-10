@@ -11,16 +11,17 @@ These files are per-tool reference pages for CLI agents, offline review, and too
 
 ## Directory Structure
 
-- `actors/`: 20 tools
-- `blueprint/`: 24 tools
-- `editor/`: 22 tools
+- `actors/`: 21 tools
+- `blueprint/`: 30 tools
+- `code/`: 7 tools
+- `editor/`: 27 tools
 - `material/`: 4 tools
 - `memory/`: 5 tools
 - `scaffold/`: 7 tools
-- `self-extension/`: 45 tools
+- `self-extension/`: 48 tools
 - `skills/`: 10 tools
-- `task-atlas/`: 6 tools
-- `verification/`: 5 tools
+- `task-atlas/`: 11 tools
+- `verification/`: 8 tools
 - `widget/`: 12 tools
 
 ## Field Definitions
@@ -39,4 +40,4 @@ These files are per-tool reference pages for CLI agents, offline review, and too
 `Tools/UnrealMcpSkills/` contains reusable task instructions discovered by the in-editor skill system.
 `Tools/UnrealMcpToolDocs/` contains generated reference pages for MCP tools and is intentionally outside the skill discovery path.
 
-Generated tool count: 160
+Generated tool count: 190
