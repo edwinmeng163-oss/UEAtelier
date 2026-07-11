@@ -9,6 +9,7 @@
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Misc/ScopeLock.h"
+#include "Misc/ScopeExit.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
@@ -94,6 +95,22 @@ namespace UnrealMcp
 			FCriticalSection GKnowledgeCardCacheMutex;
 			FKnowledgeCardCacheState GKnowledgeCardCache;
 			TSharedPtr<FJsonObject> CardToJsonObject(const FKnowledgeCard& Card);
+			bool JsonObjectToCard(const TSharedPtr<FJsonObject>& Object, FKnowledgeCard& OutCard);
+			void InvalidateKnowledgeCardCache();
+
+#if WITH_DEV_AUTOMATION_TESTS
+			int32 GKnowledgeIndexWriteInterruptionStageForTests = 0;
+
+			bool ConsumeKnowledgeIndexWriteInterruptionForTests(int32 Stage)
+			{
+				if (GKnowledgeIndexWriteInterruptionStageForTests != Stage)
+				{
+					return false;
+				}
+				GKnowledgeIndexWriteInterruptionStageForTests = 0;
+				return true;
+			}
+#endif
 
 		FString GetKnowledgeIndexRoot()
 		{
@@ -343,17 +360,40 @@ namespace UnrealMcp
 		{
 			const FString CardsPath = FPaths::Combine(IndexDir, TEXT("cards.jsonl"));
 			const FString ManifestPath = FPaths::Combine(IndexDir, TEXT("index.json"));
+			const FString CardsBackupPath = FPaths::Combine(IndexDir, TEXT("cards.jsonl.bak"));
+			const FString ManifestBackupPath = FPaths::Combine(IndexDir, TEXT("index.json.bak"));
 			if (!IsKnowledgePathWithinRoot(IndexDir, FPaths::ProjectSavedDir())
 				|| !IsKnowledgePathWithinRoot(CardsPath, IndexDir)
-				|| !IsKnowledgePathWithinRoot(ManifestPath, IndexDir))
+				|| !IsKnowledgePathWithinRoot(ManifestPath, IndexDir)
+				|| !IsKnowledgePathWithinRoot(CardsBackupPath, IndexDir)
+				|| !IsKnowledgePathWithinRoot(ManifestBackupPath, IndexDir))
 			{
-				OutFailureReason = TEXT("Knowledge index root and fixed leaf files must remain inside ProjectSavedDir without symlink or reparse-point traversal.");
+				OutFailureReason = TEXT("Knowledge index root and fixed current/backup leaf files must remain inside ProjectSavedDir without symlink or reparse-point traversal.");
 				return false;
 			}
 			return true;
 		}
 
-		bool WriteKnowledgeTextAtomic(const FString& Text, const FString& TargetPath, FString& OutFailureReason)
+		void CleanupKnowledgeIndexTransactionTemps(const FString& IndexDir)
+		{
+			TArray<FString> TempFilenames;
+			IFileManager::Get().FindFiles(TempFilenames, *FPaths::Combine(IndexDir, TEXT("*.tmp.*")), true, false);
+			for (const FString& TempFilename : TempFilenames)
+			{
+				const FString TempPath = FPaths::Combine(IndexDir, TempFilename);
+				if (IsKnowledgePathWithinRoot(TempPath, IndexDir))
+				{
+					IFileManager::Get().Delete(*TempPath, false, true);
+				}
+			}
+		}
+
+		bool StageKnowledgeText(
+			const FString& Text,
+			const FString& TargetPath,
+			const FString& TransactionId,
+			FString& OutTempPath,
+			FString& OutFailureReason)
 		{
 			if (!IsKnowledgePathWithinRoot(TargetPath, FPaths::ProjectSavedDir()))
 			{
@@ -367,19 +407,236 @@ namespace UnrealMcp
 				return false;
 			}
 
-			const FString TempPath = FString::Printf(
+			OutTempPath = FString::Printf(
 				TEXT("%s.tmp.%s"),
 				*TargetPath,
-				*FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphensLower));
-			if (!FFileHelper::SaveStringToFile(Text, *TempPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+				*TransactionId);
+			if (!IsKnowledgePathWithinRoot(OutTempPath, TargetDir))
 			{
-				OutFailureReason = FString::Printf(TEXT("Failed to write temporary knowledge index file '%s'."), *TempPath);
+				OutFailureReason = TEXT("Knowledge index transaction temp escaped its bounded index root.");
+				OutTempPath.Reset();
+				return false;
+			}
+			if (!FFileHelper::SaveStringToFile(Text, *OutTempPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+			{
+				IFileManager::Get().Delete(*OutTempPath, false, true);
+				OutFailureReason = FString::Printf(TEXT("Failed to write temporary knowledge index file '%s'."), *OutTempPath);
+				return false;
+			}
+
+			FString Readback;
+			if (!FFileHelper::LoadFileToString(Readback, *OutTempPath)
+				|| !Readback.Equals(Text, ESearchCase::CaseSensitive))
+			{
+				IFileManager::Get().Delete(*OutTempPath, false, true);
+				OutFailureReason = FString::Printf(TEXT("Knowledge index transaction temp verification failed for '%s'."), *TargetPath);
+				return false;
+			}
+			return true;
+		}
+
+		bool CommitStagedKnowledgeText(const FString& TempPath, const FString& TargetPath, FString& OutFailureReason)
+		{
+			const FString TargetDir = FPaths::GetPath(TargetPath);
+			if (!IsKnowledgePathWithinRoot(TempPath, TargetDir)
+				|| !IsKnowledgePathWithinRoot(TargetPath, TargetDir))
+			{
+				OutFailureReason = TEXT("Knowledge index staged commit path escaped its bounded index root.");
 				return false;
 			}
 			if (!IFileManager::Get().Move(*TargetPath, *TempPath, true, true))
 			{
-				IFileManager::Get().Delete(*TempPath, false, true);
-				OutFailureReason = FString::Printf(TEXT("Failed to atomically replace knowledge index file '%s'."), *TargetPath);
+				OutFailureReason = FString::Printf(TEXT("Failed to replace knowledge index file '%s' from its staged transaction file."), *TargetPath);
+				return false;
+			}
+			return true;
+		}
+
+		bool ValidateKnowledgeIndexPairText(
+			const FString& CardsText,
+			const FString& ManifestText,
+			FString& OutFailureReason)
+		{
+			TSharedPtr<FJsonObject> Manifest;
+			if (!LoadJsonObjectFromString(ManifestText, Manifest) || !Manifest.IsValid())
+			{
+				OutFailureReason = TEXT("Knowledge index pair manifest is not valid JSON.");
+				return false;
+			}
+
+			FString Schema;
+			FString ExpectedCardsSha256;
+			double ExpectedCardCount = -1.0;
+			if (!Manifest->TryGetStringField(TEXT("schema"), Schema)
+				|| !Schema.Equals(TEXT("UEvolve.KnowledgeIndex.v2"), ESearchCase::CaseSensitive)
+				|| !Manifest->TryGetStringField(TEXT("cardsSha256"), ExpectedCardsSha256)
+				|| ExpectedCardsSha256.IsEmpty()
+				|| !Manifest->TryGetNumberField(TEXT("cardCount"), ExpectedCardCount))
+			{
+				OutFailureReason = TEXT("Knowledge index pair lacks required v2 integrity metadata.");
+				return false;
+			}
+			if (!HashUtils::Sha256LowerHexFromUtf8(CardsText).Equals(ExpectedCardsSha256, ESearchCase::IgnoreCase))
+			{
+				OutFailureReason = TEXT("Knowledge index pair cardsSha256 does not match its cards text.");
+				return false;
+			}
+
+			TArray<FString> Lines;
+			CardsText.ParseIntoArrayLines(Lines, false);
+			int32 CardCount = 0;
+			for (const FString& Line : Lines)
+			{
+				if (Line.TrimStartAndEnd().IsEmpty())
+				{
+					continue;
+				}
+				TSharedPtr<FJsonObject> CardObject;
+				FKnowledgeCard Card;
+				if (!LoadJsonObjectFromString(Line, CardObject) || !JsonObjectToCard(CardObject, Card))
+				{
+					OutFailureReason = TEXT("Knowledge index pair contains an invalid KnowledgeCard row.");
+					return false;
+				}
+				CardCount++;
+			}
+			if (CardCount != static_cast<int32>(ExpectedCardCount))
+			{
+				OutFailureReason = FString::Printf(
+					TEXT("Knowledge index pair card count mismatch: manifest=%d, cards=%d."),
+					static_cast<int32>(ExpectedCardCount),
+					CardCount);
+				return false;
+			}
+			return true;
+		}
+
+		bool LoadAndValidateKnowledgeIndexPair(
+			const FString& CardsPath,
+			const FString& ManifestPath,
+			FString& OutCardsText,
+			FString& OutManifestText,
+			FString& OutFailureReason)
+		{
+			if (!FPaths::FileExists(CardsPath) || !FPaths::FileExists(ManifestPath))
+			{
+				OutFailureReason = TEXT("Knowledge index pair is incomplete.");
+				return false;
+			}
+			if (!FFileHelper::LoadFileToString(OutCardsText, *CardsPath)
+				|| !FFileHelper::LoadFileToString(OutManifestText, *ManifestPath))
+			{
+				OutFailureReason = TEXT("Knowledge index pair could not be read.");
+				return false;
+			}
+			return ValidateKnowledgeIndexPairText(OutCardsText, OutManifestText, OutFailureReason);
+		}
+
+		void DeleteKnowledgeIndexBackups(const FString& CardsBackupPath, const FString& ManifestBackupPath)
+		{
+			IFileManager::Get().Delete(*CardsBackupPath, false, true);
+			IFileManager::Get().Delete(*ManifestBackupPath, false, true);
+		}
+
+		bool RestoreKnowledgeIndexPairFromBackup(const FString& IndexDir, FString& OutFailureReason)
+		{
+			const FString CardsPath = FPaths::Combine(IndexDir, TEXT("cards.jsonl"));
+			const FString ManifestPath = FPaths::Combine(IndexDir, TEXT("index.json"));
+			const FString CardsBackupPath = FPaths::Combine(IndexDir, TEXT("cards.jsonl.bak"));
+			const FString ManifestBackupPath = FPaths::Combine(IndexDir, TEXT("index.json.bak"));
+			FString CardsBackupText;
+			FString ManifestBackupText;
+			FString BackupFailureReason;
+			if (!LoadAndValidateKnowledgeIndexPair(
+				CardsBackupPath,
+				ManifestBackupPath,
+				CardsBackupText,
+				ManifestBackupText,
+				BackupFailureReason))
+			{
+				OutFailureReason = TEXT("Knowledge index recovery backup is unavailable or invalid: ") + BackupFailureReason;
+				return false;
+			}
+
+			const FString TransactionId = TEXT("restore-") + FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphensLower);
+			FString CardsTempPath;
+			FString ManifestTempPath;
+			ON_SCOPE_EXIT
+			{
+				if (!CardsTempPath.IsEmpty())
+				{
+					IFileManager::Get().Delete(*CardsTempPath, false, true);
+				}
+				if (!ManifestTempPath.IsEmpty())
+				{
+					IFileManager::Get().Delete(*ManifestTempPath, false, true);
+				}
+			};
+
+			FString StageFailureReason;
+			if (!StageKnowledgeText(CardsBackupText, CardsPath, TransactionId, CardsTempPath, StageFailureReason)
+				|| !StageKnowledgeText(ManifestBackupText, ManifestPath, TransactionId, ManifestTempPath, StageFailureReason)
+				|| !CommitStagedKnowledgeText(CardsTempPath, CardsPath, StageFailureReason)
+				|| !CommitStagedKnowledgeText(ManifestTempPath, ManifestPath, StageFailureReason))
+			{
+				OutFailureReason = TEXT("Knowledge index recovery failed; verified backup retained: ") + StageFailureReason;
+				return false;
+			}
+
+			FString RestoredCardsText;
+			FString RestoredManifestText;
+			FString VerificationFailureReason;
+			if (!LoadAndValidateKnowledgeIndexPair(
+				CardsPath,
+				ManifestPath,
+				RestoredCardsText,
+				RestoredManifestText,
+				VerificationFailureReason)
+				|| !RestoredCardsText.Equals(CardsBackupText, ESearchCase::CaseSensitive)
+				|| !RestoredManifestText.Equals(ManifestBackupText, ESearchCase::CaseSensitive))
+			{
+				OutFailureReason = TEXT("Knowledge index recovery verification failed; verified backup retained: ") + VerificationFailureReason;
+				return false;
+			}
+
+			DeleteKnowledgeIndexBackups(CardsBackupPath, ManifestBackupPath);
+			InvalidateKnowledgeCardCache();
+			return true;
+		}
+
+		bool RecoverKnowledgeIndexPairIfNeeded(const FString& IndexDir, FString& OutFailureReason)
+		{
+			if (!ValidateKnowledgeIndexLeafPaths(IndexDir, OutFailureReason))
+			{
+				return false;
+			}
+			CleanupKnowledgeIndexTransactionTemps(IndexDir);
+
+			const FString CardsPath = FPaths::Combine(IndexDir, TEXT("cards.jsonl"));
+			const FString ManifestPath = FPaths::Combine(IndexDir, TEXT("index.json"));
+			const FString CardsBackupPath = FPaths::Combine(IndexDir, TEXT("cards.jsonl.bak"));
+			const FString ManifestBackupPath = FPaths::Combine(IndexDir, TEXT("index.json.bak"));
+			FString CurrentCardsText;
+			FString CurrentManifestText;
+			FString CurrentFailureReason;
+			if (LoadAndValidateKnowledgeIndexPair(
+				CardsPath,
+				ManifestPath,
+				CurrentCardsText,
+				CurrentManifestText,
+				CurrentFailureReason))
+			{
+				DeleteKnowledgeIndexBackups(CardsBackupPath, ManifestBackupPath);
+				return true;
+			}
+
+			const bool bHasAnyBackup = FPaths::FileExists(CardsBackupPath) || FPaths::FileExists(ManifestBackupPath);
+			if (!bHasAnyBackup)
+			{
+				return true;
+			}
+			if (!RestoreKnowledgeIndexPairFromBackup(IndexDir, OutFailureReason))
+			{
 				return false;
 			}
 			return true;
@@ -519,7 +776,7 @@ namespace UnrealMcp
 			return Result;
 		}
 
-		bool WriteKnowledgeIndexPairAtomic(
+		bool WriteKnowledgeIndexPairRecoverable(
 			const FString& CardsPath,
 			const FString& CardsText,
 			const FString& ManifestPath,
@@ -528,6 +785,8 @@ namespace UnrealMcp
 		{
 			const FString IndexDir = FPaths::GetPath(CardsPath);
 			if (!FPaths::GetPath(ManifestPath).Equals(IndexDir, ESearchCase::CaseSensitive)
+				|| !FPaths::GetCleanFilename(CardsPath).Equals(TEXT("cards.jsonl"), ESearchCase::CaseSensitive)
+				|| !FPaths::GetCleanFilename(ManifestPath).Equals(TEXT("index.json"), ESearchCase::CaseSensitive)
 				|| !ValidateKnowledgeIndexLeafPaths(IndexDir, OutFailureReason))
 			{
 				if (OutFailureReason.IsEmpty())
@@ -536,59 +795,133 @@ namespace UnrealMcp
 				}
 				return false;
 			}
-			const bool bHadCards = FPaths::FileExists(CardsPath);
-			const bool bHadManifest = FPaths::FileExists(ManifestPath);
-			FString PreviousCards;
-			FString PreviousManifest;
-			if ((bHadCards && !FFileHelper::LoadFileToString(PreviousCards, *CardsPath))
-				|| (bHadManifest && !FFileHelper::LoadFileToString(PreviousManifest, *ManifestPath)))
+
+			FString CandidateFailureReason;
+			if (!ValidateKnowledgeIndexPairText(CardsText, ManifestText, CandidateFailureReason))
 			{
-				OutFailureReason = TEXT("Failed to preserve the last-known-good knowledge index before replacement.");
+				OutFailureReason = TEXT("Refusing to stage an invalid knowledge index pair: ") + CandidateFailureReason;
 				return false;
 			}
 
-			auto RestorePrevious = [&]()
+			if (!RecoverKnowledgeIndexPairIfNeeded(IndexDir, OutFailureReason))
 			{
-				FString IgnoredFailureReason;
-				if (bHadCards)
+				return false;
+			}
+
+			const FString CardsBackupPath = FPaths::Combine(IndexDir, TEXT("cards.jsonl.bak"));
+			const FString ManifestBackupPath = FPaths::Combine(IndexDir, TEXT("index.json.bak"));
+			const FString TransactionId = FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphensLower);
+			FString CardsTempPath;
+			FString ManifestTempPath;
+			FString CardsBackupTempPath;
+			FString ManifestBackupTempPath;
+			ON_SCOPE_EXIT
+			{
+				for (const FString& TempPath : { CardsTempPath, ManifestTempPath, CardsBackupTempPath, ManifestBackupTempPath })
 				{
-					WriteKnowledgeTextAtomic(PreviousCards, CardsPath, IgnoredFailureReason);
-				}
-				else
-				{
-					IFileManager::Get().Delete(*CardsPath, false, true);
-				}
-				if (bHadManifest)
-				{
-					WriteKnowledgeTextAtomic(PreviousManifest, ManifestPath, IgnoredFailureReason);
-				}
-				else
-				{
-					IFileManager::Get().Delete(*ManifestPath, false, true);
+					if (!TempPath.IsEmpty())
+					{
+						IFileManager::Get().Delete(*TempPath, false, true);
+					}
 				}
 			};
 
-			if (!WriteKnowledgeTextAtomic(CardsText, CardsPath, OutFailureReason))
+			if (!StageKnowledgeText(CardsText, CardsPath, TransactionId, CardsTempPath, OutFailureReason)
+				|| !StageKnowledgeText(ManifestText, ManifestPath, TransactionId, ManifestTempPath, OutFailureReason))
 			{
 				return false;
 			}
-			if (!WriteKnowledgeTextAtomic(ManifestText, ManifestPath, OutFailureReason))
+
+			FString PreviousCards;
+			FString PreviousManifest;
+			FString PreviousFailureReason;
+			const bool bHasLastKnownGood = LoadAndValidateKnowledgeIndexPair(
+				CardsPath,
+				ManifestPath,
+				PreviousCards,
+				PreviousManifest,
+				PreviousFailureReason);
+			if (bHasLastKnownGood)
 			{
-				RestorePrevious();
+				if (!StageKnowledgeText(PreviousCards, CardsBackupPath, TransactionId, CardsBackupTempPath, OutFailureReason)
+					|| !StageKnowledgeText(PreviousManifest, ManifestBackupPath, TransactionId, ManifestBackupTempPath, OutFailureReason)
+					|| !CommitStagedKnowledgeText(CardsBackupTempPath, CardsBackupPath, OutFailureReason)
+					|| !CommitStagedKnowledgeText(ManifestBackupTempPath, ManifestBackupPath, OutFailureReason))
+				{
+					OutFailureReason = TEXT("Failed to stage a verified last-known-good knowledge index backup: ") + OutFailureReason;
+					return false;
+				}
+
+				FString VerifiedBackupCards;
+				FString VerifiedBackupManifest;
+				FString BackupFailureReason;
+				if (!LoadAndValidateKnowledgeIndexPair(
+					CardsBackupPath,
+					ManifestBackupPath,
+					VerifiedBackupCards,
+					VerifiedBackupManifest,
+					BackupFailureReason)
+					|| !VerifiedBackupCards.Equals(PreviousCards, ESearchCase::CaseSensitive)
+					|| !VerifiedBackupManifest.Equals(PreviousManifest, ESearchCase::CaseSensitive))
+				{
+					OutFailureReason = TEXT("Last-known-good knowledge index backup verification failed: ") + BackupFailureReason;
+					return false;
+				}
+			}
+			else
+			{
+				DeleteKnowledgeIndexBackups(CardsBackupPath, ManifestBackupPath);
+			}
+
+			auto FailAndRestore = [&](const FString& ReplacementFailureReason)
+			{
+				if (!bHasLastKnownGood)
+				{
+					OutFailureReason = ReplacementFailureReason;
+					return false;
+				}
+				FString RestoreFailureReason;
+				if (!RestoreKnowledgeIndexPairFromBackup(IndexDir, RestoreFailureReason))
+				{
+					OutFailureReason = ReplacementFailureReason + TEXT(" Recovery failed; verified backup retained: ") + RestoreFailureReason;
+					return false;
+				}
+				OutFailureReason = ReplacementFailureReason + TEXT(" The last-known-good knowledge index was restored and verified.");
 				return false;
+			};
+
+			FString CommitFailureReason;
+			if (!CommitStagedKnowledgeText(CardsTempPath, CardsPath, CommitFailureReason))
+			{
+				return FailAndRestore(CommitFailureReason);
+			}
+#if WITH_DEV_AUTOMATION_TESTS
+			if (ConsumeKnowledgeIndexWriteInterruptionForTests(1))
+			{
+				OutFailureReason = TEXT("Simulated knowledge index interruption after cards commit; recovery backup retained.");
+				return false;
+			}
+#endif
+			if (!CommitStagedKnowledgeText(ManifestTempPath, ManifestPath, CommitFailureReason))
+			{
+				return FailAndRestore(CommitFailureReason);
 			}
 
 			FString WrittenCards;
 			FString WrittenManifest;
-			if (!FFileHelper::LoadFileToString(WrittenCards, *CardsPath)
-				|| !FFileHelper::LoadFileToString(WrittenManifest, *ManifestPath)
+			FString VerificationFailureReason;
+			if (!LoadAndValidateKnowledgeIndexPair(
+				CardsPath,
+				ManifestPath,
+				WrittenCards,
+				WrittenManifest,
+				VerificationFailureReason)
 				|| !WrittenCards.Equals(CardsText, ESearchCase::CaseSensitive)
 				|| !WrittenManifest.Equals(ManifestText, ESearchCase::CaseSensitive))
 			{
-				RestorePrevious();
-				OutFailureReason = TEXT("Knowledge index verification failed after replacement; the last-known-good index was restored.");
-				return false;
+				return FailAndRestore(TEXT("Knowledge index verification failed after replacement: ") + VerificationFailureReason);
 			}
+			DeleteKnowledgeIndexBackups(CardsBackupPath, ManifestBackupPath);
 			return true;
 		}
 
@@ -648,7 +981,10 @@ namespace UnrealMcp
 
 		bool IsKnowledgeWordCharacter(TCHAR Character)
 		{
-			return FChar::IsAlnum(Character) || Character == TEXT('_');
+			return (Character >= TEXT('a') && Character <= TEXT('z'))
+				|| (Character >= TEXT('A') && Character <= TEXT('Z'))
+				|| (Character >= TEXT('0') && Character <= TEXT('9'))
+				|| Character == TEXT('_');
 		}
 
 		bool ContainsKnowledgeSearchTerm(const FString& LowerText, const FString& LowerTerm)
@@ -685,36 +1021,46 @@ namespace UnrealMcp
 			return false;
 		}
 
-		TArray<FString> ExtractSearchTokens(const FString& Text)
+		TArray<FString> ExtractLiteralSearchTokens(const FString& Text)
 		{
 			TArray<FString> Tokens;
 			FString Current;
+			bool bCurrentIsCjk = false;
 			const FString LowerText = Text.ToLower();
 			auto FlushCurrent = [&]()
 			{
 				if (Current.Len() >= 2)
 				{
 					Tokens.AddUnique(Current);
-					for (int32 Index = 0; Index + 1 < Current.Len(); ++Index)
+					if (bCurrentIsCjk)
 					{
-						if (IsKnowledgeCjkCharacter(Current[Index]) && IsKnowledgeCjkCharacter(Current[Index + 1]))
+						for (int32 Index = 0; Index + 1 < Current.Len(); ++Index)
 						{
 							Tokens.AddUnique(Current.Mid(Index, 2));
 						}
 					}
 				}
 				Current.Reset();
+				bCurrentIsCjk = false;
 			};
 
 			for (int32 Index = 0; Index < LowerText.Len(); ++Index)
 			{
 				const TCHAR Character = LowerText[Index];
-				if (FChar::IsAlnum(Character) || Character == TEXT('_'))
+				const bool bIsCjk = IsKnowledgeCjkCharacter(Character);
+				const bool bIsAsciiWord = IsKnowledgeWordCharacter(Character);
+				if (bIsCjk || bIsAsciiWord)
 				{
+					if (!Current.IsEmpty() && bCurrentIsCjk != bIsCjk)
+					{
+						FlushCurrent();
+					}
+					bCurrentIsCjk = bIsCjk;
 					Current.AppendChar(Character);
 				}
 				else if (Character == TEXT('.')
 					&& !Current.IsEmpty()
+					&& !bCurrentIsCjk
 					&& FChar::IsDigit(Current[Current.Len() - 1])
 					&& Index + 1 < LowerText.Len()
 					&& FChar::IsDigit(LowerText[Index + 1]))
@@ -727,7 +1073,12 @@ namespace UnrealMcp
 				}
 			}
 			FlushCurrent();
+			return Tokens;
+		}
 
+		TArray<FString> ExtractSearchTokens(const FString& Text)
+		{
+			TArray<FString> Tokens = ExtractLiteralSearchTokens(Text);
 			const TArray<FString> OriginalTokens = Tokens;
 			for (const FString& Token : OriginalTokens)
 			{
@@ -2024,11 +2375,6 @@ namespace UnrealMcp
 				}
 			}
 
-		bool WriteKnowledgeCardsJsonl(const FString& Path, const TArray<FKnowledgeCard>& Cards, FString& OutFailureReason)
-		{
-			return WriteKnowledgeTextAtomic(KnowledgeCardsToJsonl(Cards), Path, OutFailureReason);
-		}
-
 		FString MakeKnowledgeDedupKey(const FKnowledgeCard& Card)
 		{
 			FString TextKey = Card.Text.Left(700).ToLower();
@@ -2214,6 +2560,11 @@ namespace UnrealMcp
 					SetStatus(TEXT("corrupt"));
 					return false;
 				}
+				if (!RecoverKnowledgeIndexPairIfNeeded(IndexDir, OutFailureReason))
+				{
+					SetStatus(TEXT("corrupt"));
+					return false;
+				}
 				const FString CardsPath = FPaths::Combine(IndexDir, TEXT("cards.jsonl"));
 				const int64 FileSize = IFileManager::Get().FileSize(*CardsPath);
 				if (FileSize < 0)
@@ -2320,31 +2671,61 @@ namespace UnrealMcp
 				return true;
 			}
 
-		double ScoreKnowledgeCard(const FKnowledgeCard& Card, const FString& Query, const TArray<FString>& QueryTokens)
+		struct FKnowledgeQueryContext
 		{
-			const FString QueryLower = Query.ToLower().TrimStartAndEnd();
-			const TArray<FString> OriginalTokens = ExtractSearchTokens(Query);
+			FString QueryLower;
+			TArray<FString> QueryTokens;
 			TSet<FString> OriginalTokenSet;
 			TSet<FString> ExplicitEngineVersions;
-			for (const FString& OriginalToken : OriginalTokens)
+		};
+
+		FKnowledgeQueryContext BuildKnowledgeQueryContext(const FString& Query, const TArray<FKnowledgeCard>& Cards)
+		{
+			FKnowledgeQueryContext Context;
+			Context.QueryLower = Query.ToLower().TrimStartAndEnd();
+			Context.QueryTokens = ExpandSearchTokens(Query);
+			const TArray<FString> LiteralTokens = ExtractLiteralSearchTokens(Query);
+			TSet<FString> IndexedEngineVersions;
+			for (const FKnowledgeCard& Card : Cards)
 			{
-				OriginalTokenSet.Add(OriginalToken);
-				const FString VersionCandidate = OriginalToken.StartsWith(TEXT("ue"), ESearchCase::CaseSensitive)
-					? OriginalToken.Mid(2)
-					: OriginalToken;
-				if (IsKnowledgeVersionToken(VersionCandidate))
+				if (!Card.EngineVersion.IsEmpty())
 				{
-					ExplicitEngineVersions.Add(VersionCandidate);
+					IndexedEngineVersions.Add(Card.EngineVersion.ToLower());
 				}
 			}
+			for (int32 Index = 0; Index < LiteralTokens.Num(); ++Index)
+			{
+				const FString& LiteralToken = LiteralTokens[Index];
+				Context.OriginalTokenSet.Add(LiteralToken);
+				const bool bHasUePrefix = LiteralToken.StartsWith(TEXT("ue"), ESearchCase::CaseSensitive);
+				const FString VersionCandidate = bHasUePrefix ? LiteralToken.Mid(2) : LiteralToken;
+				if (!IsKnowledgeVersionToken(VersionCandidate))
+				{
+					continue;
+				}
+				const bool bHasUeContext = bHasUePrefix
+					|| (Index >= 1 && LiteralTokens[Index - 1].Equals(TEXT("ue"), ESearchCase::CaseSensitive))
+					|| (Index >= 2
+						&& LiteralTokens[Index - 2].Equals(TEXT("unreal"), ESearchCase::CaseSensitive)
+						&& LiteralTokens[Index - 1].Equals(TEXT("engine"), ESearchCase::CaseSensitive));
+				if (bHasUeContext || IndexedEngineVersions.Contains(VersionCandidate))
+				{
+					Context.ExplicitEngineVersions.Add(VersionCandidate);
+				}
+			}
+			return Context;
+		}
+
+		double ScoreKnowledgeCard(const FKnowledgeCard& Card, const FKnowledgeQueryContext& QueryContext)
+		{
 			const FString TitleLower = Card.Title.ToLower();
 			const FString SectionLower = (Card.SectionTitle + TEXT(" ") + Card.SectionPath).ToLower();
 			const FString CategoryLower = Card.Category.ToLower();
 			const FString TextLower = Card.Text.ToLower();
 			double Score = 0.0;
-			if (!ExplicitEngineVersions.IsEmpty() && !Card.EngineVersion.IsEmpty())
+			if (!QueryContext.ExplicitEngineVersions.IsEmpty() && !Card.EngineVersion.IsEmpty())
 			{
-				const bool bMatchesExplicitVersion = ExplicitEngineVersions.Contains(Card.EngineVersion);
+				const bool bMatchesExplicitVersion = QueryContext.ExplicitEngineVersions.Contains(Card.EngineVersion.ToLower());
 				if (!bMatchesExplicitVersion)
 				{
 					return 0.0;
@@ -2352,29 +2733,29 @@ namespace UnrealMcp
 				Score += 30.0;
 			}
 
-			if (!QueryLower.IsEmpty())
+			if (!QueryContext.QueryLower.IsEmpty())
 			{
-				if (ContainsKnowledgeSearchTerm(TitleLower, QueryLower))
+				if (ContainsKnowledgeSearchTerm(TitleLower, QueryContext.QueryLower))
 				{
 					Score += 40.0;
 				}
-				if (ContainsKnowledgeSearchTerm(SectionLower, QueryLower))
+				if (ContainsKnowledgeSearchTerm(SectionLower, QueryContext.QueryLower))
 				{
 					Score += 28.0;
 				}
-				if (ContainsKnowledgeSearchTerm(CategoryLower, QueryLower))
+				if (ContainsKnowledgeSearchTerm(CategoryLower, QueryContext.QueryLower))
 				{
 					Score += 16.0;
 				}
-				if (ContainsKnowledgeSearchTerm(TextLower, QueryLower))
+				if (ContainsKnowledgeSearchTerm(TextLower, QueryContext.QueryLower))
 				{
 					Score += 20.0;
 				}
 			}
 
-			for (const FString& Token : QueryTokens)
+			for (const FString& Token : QueryContext.QueryTokens)
 			{
-				const double TokenWeight = OriginalTokenSet.Contains(Token) ? 1.0 : 0.55;
+				const double TokenWeight = QueryContext.OriginalTokenSet.Contains(Token) ? 1.0 : 0.55;
 				if (ContainsKnowledgeSearchTerm(TitleLower, Token))
 				{
 					Score += 12.0 * TokenWeight;
@@ -2710,6 +3091,13 @@ namespace UnrealMcp
 
 	}
 
+#if WITH_DEV_AUTOMATION_TESTS
+	void SetKnowledgeIndexWriteInterruptionStageForTests(int32 Stage)
+	{
+		GKnowledgeIndexWriteInterruptionStageForTests = Stage;
+	}
+#endif
+
 	FUnrealMcpExecutionResult KnowledgeIndexRefresh(const FJsonObject& Arguments)
 	{
 		FString RequestedSourceRoot;
@@ -2764,6 +3152,24 @@ namespace UnrealMcp
 			Arguments.TryGetBoolField(TEXT("skipLowContent"), bSkipLowContent);
 			Arguments.TryGetBoolField(TEXT("allowEmptyIndex"), bAllowEmptyIndex);
 			Arguments.TryGetBoolField(TEXT("dryRun"), bDryRun);
+			if (bAllowEmptyIndex)
+			{
+				const FString TestIndexRoot = FPaths::ConvertRelativePathToFull(
+					FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UnrealMcp/Tests")));
+				if (RequestedIndexRoot.TrimStartAndEnd().IsEmpty()
+					|| !IsKnowledgePathWithinRoot(IndexRoot, TestIndexRoot))
+				{
+					TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+					StructuredContent->SetStringField(TEXT("action"), TEXT("knowledge_index_refresh"));
+					StructuredContent->SetStringField(TEXT("rejectedField"), TEXT("allowEmptyIndex"));
+					StructuredContent->SetStringField(TEXT("requestedIndexRoot"), RequestedIndexRoot);
+					StructuredContent->SetStringField(TEXT("allowedIndexRoot"), MakeProjectRelativePath(TestIndexRoot));
+					return MakeExecutionResult(
+						TEXT("allowEmptyIndex=true requires an explicit indexRoot under Saved/UnrealMcp/Tests."),
+						StructuredContent,
+						true);
+				}
+			}
 
 		const int32 MaxCards = FMath::Clamp(GetPositiveIntArgument(Arguments, TEXT("maxCards"), DefaultKnowledgeMaxCards), 1, 20000);
 		const int32 MaxChunkChars = FMath::Clamp(GetPositiveIntArgument(Arguments, TEXT("maxChunkChars"), DefaultKnowledgeChunkChars), 400, 12000);
@@ -2945,7 +3351,7 @@ namespace UnrealMcp
 		Manifest->SetArrayField(TEXT("sourceDocumentsJsonl"), SourceFileValues);
 		Manifest->SetArrayField(TEXT("sourceMarkdown"), SourceMarkdownFileValues);
 		const FString ManifestText = JsonObjectToCondensedString(Manifest);
-		if (!WriteKnowledgeIndexPairAtomic(CardsPath, CardsText, ManifestPath, ManifestText, FailureReason))
+		if (!WriteKnowledgeIndexPairRecoverable(CardsPath, CardsText, ManifestPath, ManifestText, FailureReason))
 		{
 			StructuredContent->SetStringField(TEXT("indexStatus"), TEXT("corrupt"));
 			return MakeExecutionResult(FailureReason, StructuredContent, true);
@@ -3023,7 +3429,8 @@ namespace UnrealMcp
 			return MakeExecutionResult(FailureReason, StructuredContent, true);
 		}
 
-		const TArray<FString> QueryTokens = ExpandSearchTokens(Query);
+		const FKnowledgeQueryContext QueryContext = BuildKnowledgeQueryContext(Query, Cards);
+		const TArray<FString>& QueryTokens = QueryContext.QueryTokens;
 		struct FScoredCard
 		{
 			FKnowledgeCard Card;
@@ -3040,7 +3447,7 @@ namespace UnrealMcp
 			{
 				continue;
 			}
-			const double Score = ScoreKnowledgeCard(Card, Query, QueryTokens);
+			const double Score = ScoreKnowledgeCard(Card, QueryContext);
 			if (Score > 0.0)
 			{
 				FScoredCard Scored;
@@ -3159,7 +3566,8 @@ namespace UnrealMcp
 			return Evidence;
 		}
 
-		const TArray<FString> QueryTokens = ExpandSearchTokens(Query);
+		const FKnowledgeQueryContext QueryContext = BuildKnowledgeQueryContext(Query, Cards);
+		const TArray<FString>& QueryTokens = QueryContext.QueryTokens;
 		struct FScoredEvidenceCard
 		{
 			FKnowledgeCard Card;
@@ -3168,7 +3576,7 @@ namespace UnrealMcp
 		TArray<FScoredEvidenceCard> ScoredCards;
 		for (const FKnowledgeCard& Card : Cards)
 		{
-			const double Score = ScoreKnowledgeCard(Card, Query, QueryTokens);
+			const double Score = ScoreKnowledgeCard(Card, QueryContext);
 			if (Score > 0.0)
 			{
 				FScoredEvidenceCard Scored;
@@ -3370,7 +3778,7 @@ namespace UnrealMcp
 		}
 
 		const FString ManifestText = JsonObjectToCondensedString(Manifest);
-		if (!WriteKnowledgeIndexPairAtomic(CardsPath, CardsText, ManifestPath, ManifestText, OutFailureReason))
+		if (!WriteKnowledgeIndexPairRecoverable(CardsPath, CardsText, ManifestPath, ManifestText, OutFailureReason))
 		{
 			return false;
 		}
@@ -3427,7 +3835,8 @@ namespace UnrealMcp
 				{
 					KnowledgeNote = FailureReason;
 				}
-				const TArray<FString> QueryTokens = ExpandSearchTokens(Task);
+				const FKnowledgeQueryContext QueryContext = BuildKnowledgeQueryContext(Task, Cards);
+				const TArray<FString>& QueryTokens = QueryContext.QueryTokens;
 				struct FScoredCard
 				{
 					FKnowledgeCard Card;
@@ -3436,7 +3845,7 @@ namespace UnrealMcp
 				TArray<FScoredCard> ScoredCards;
 				for (const FKnowledgeCard& Card : Cards)
 				{
-					const double Score = ScoreKnowledgeCard(Card, Task, QueryTokens);
+					const double Score = ScoreKnowledgeCard(Card, QueryContext);
 					if (Score > 0.0)
 					{
 						FScoredCard Scored;

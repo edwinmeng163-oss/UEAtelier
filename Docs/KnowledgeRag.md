@@ -116,7 +116,12 @@ added later as an optional backend, but the baseline should not require them.
 - Rebuilds the local knowledge index from versioned docs plus optional local
   runtime sources.
 - Zero-card rebuilds fail closed by default and preserve last-known-good state;
-  `allowEmptyIndex` is an explicit test escape hatch.
+  `allowEmptyIndex` requires an explicit `indexRoot` under
+  `Saved/UnrealMcp/Tests`.
+- Candidate card/manifest files and the current pair are verified before and
+  after staged replacement. A verified `.bak` pair remains available until
+  commit verification succeeds and is restored automatically on the next load
+  after an interrupted replacement.
 - ActivityLog defaults off. Promoted markdown and official-doc toggles are
   independent.
 - Default should be read-mostly with writes constrained to
@@ -232,7 +237,7 @@ they should support local model backends and explicit opt-in cloud embeddings.
 4. Add tests for registry/doc search, index recovery, ranking, source diversity,
    version tokens, and private-source opt-in. Reliability/retrieval coverage is
    implemented in `UnrealMcpKnowledgeIndexReliabilityTests.cpp` and
-   `UnrealMcpKnowledgeRetrievalTests.cpp`, including atomic manifest-safe
+   `UnrealMcpKnowledgeRetrievalTests.cpp`, including recoverable manifest-safe
    outcome appends; broader privacy fixtures remain open.
 5. Implement `unreal.tool_recommend` using registry policy and search cards.
    Done.

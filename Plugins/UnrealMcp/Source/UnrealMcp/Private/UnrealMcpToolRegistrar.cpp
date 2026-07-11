@@ -2209,7 +2209,7 @@ namespace UnrealMcp
 				Properties->SetObjectField(TEXT("includeToolRegistry"), MakeBoolProperty(TEXT("Include visible ToolRegistry entries as searchable tool cards."), true));
 				Properties->SetObjectField(TEXT("includeActivityLog"), MakeBoolProperty(TEXT("Include local activity-log summary cards. Disabled by default because logs can contain project-specific context."), false));
 				Properties->SetObjectField(TEXT("includeSkills"), MakeBoolProperty(TEXT("Include promoted project skills as searchable cards."), true));
-				Properties->SetObjectField(TEXT("allowEmptyIndex"), MakeBoolProperty(TEXT("Allow an explicitly empty index for tests. By default, an empty refresh preserves the last-known-good index."), false));
+				Properties->SetObjectField(TEXT("allowEmptyIndex"), MakeBoolProperty(TEXT("Allow an explicitly empty index only when indexRoot is explicitly under Saved/UnrealMcp/Tests. By default, an empty refresh preserves the last-known-good index."), false));
 				Properties->SetObjectField(TEXT("skipLowContent"), MakeBoolProperty(TEXT("Skip source rows flagged as low-content by the docs fetcher."), true));
 				Properties->SetObjectField(TEXT("maxCards"), MakeNumberProperty(TEXT("Maximum KnowledgeCards to write."), 2000.0));
 				Properties->SetObjectField(TEXT("maxChunkChars"), MakeNumberProperty(TEXT("Maximum text characters per card chunk."), 1800.0));

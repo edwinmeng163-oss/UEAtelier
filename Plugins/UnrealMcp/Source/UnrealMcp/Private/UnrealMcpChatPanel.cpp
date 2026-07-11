@@ -4499,6 +4499,19 @@ FString SUnrealMcpChatPanel::BuildRagContextBlock(const FString& CurrentUserProm
 	};
 
 	FUnrealMcpExecutionResult RecommendResult = RunToolRecommend();
+	auto HasUnusableIndexStatus = [](const FUnrealMcpExecutionResult& Result)
+	{
+		if (Result.bIsError || !Result.StructuredContent.IsValid())
+		{
+			return true;
+		}
+		FString IndexStatus;
+		Result.StructuredContent->TryGetStringField(TEXT("indexStatus"), IndexStatus);
+		return IndexStatus.Equals(TEXT("missing"), ESearchCase::CaseSensitive)
+			|| IndexStatus.Equals(TEXT("empty"), ESearchCase::CaseSensitive)
+			|| IndexStatus.Equals(TEXT("stale"), ESearchCase::CaseSensitive)
+			|| IndexStatus.Equals(TEXT("corrupt"), ESearchCase::CaseSensitive);
+	};
 	if (RecommendResult.StructuredContent.IsValid())
 	{
 		FString IndexStatus;
@@ -4508,7 +4521,7 @@ FString SUnrealMcpChatPanel::BuildRagContextBlock(const FString& CurrentUserProm
 			|| IndexStatus.Equals(TEXT("empty"), ESearchCase::CaseSensitive)
 			|| IndexStatus.Equals(TEXT("stale"), ESearchCase::CaseSensitive)
 			|| IndexStatus.Equals(TEXT("corrupt"), ESearchCase::CaseSensitive);
-		if (bNeedsIndexRefresh)
+		if (bNeedsIndexRefresh && !bRagAutoRefreshFailedThisSession)
 		{
 			TSharedPtr<FJsonObject> RefreshArguments = MakeShared<FJsonObject>();
 			RefreshArguments->SetBoolField(TEXT("includeOfficialDocs"), true);
@@ -4519,8 +4532,16 @@ FString SUnrealMcpChatPanel::BuildRagContextBlock(const FString& CurrentUserProm
 			RefreshArguments->SetBoolField(TEXT("includeSkills"), true);
 			RefreshArguments->SetBoolField(TEXT("skipLowContent"), true);
 			RefreshArguments->SetNumberField(TEXT("maxCards"), 2000.0);
-			OwnerModule->ExecuteToolFromEditorUI(TEXT("unreal.knowledge_index_refresh"), *RefreshArguments);
-			RecommendResult = RunToolRecommend();
+			const FUnrealMcpExecutionResult RefreshResult = OwnerModule->ExecuteToolFromEditorUI(TEXT("unreal.knowledge_index_refresh"), *RefreshArguments);
+			if (RefreshResult.bIsError)
+			{
+				bRagAutoRefreshFailedThisSession = true;
+			}
+			else
+			{
+				RecommendResult = RunToolRecommend();
+				bRagAutoRefreshFailedThisSession = HasUnusableIndexStatus(RecommendResult);
+			}
 		}
 	}
 

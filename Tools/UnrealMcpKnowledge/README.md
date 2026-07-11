@@ -20,8 +20,10 @@ lower-weight synonym expansion, source/engine diversity, source/confidence
 weighting, and duplicate source-section suppression. KnowledgeIndex v2 binds
 cards to hashes and freshness metadata and reports
 `missing|empty|stale|ready|corrupt`. Verified outcome-card appends update the
-card/manifest pair together and fail closed when the base index is stale or
-corrupt. Embeddings can be added later as an optional backend, but the baseline
+card/manifest pair through staged candidates and a verified recoverable backup,
+and fail closed when the base index is stale or corrupt. Plain numeric tokens
+become engine filters only when the indexed versions or explicit UE context
+identify them as engine versions. Embeddings can be added later as an optional backend, but the baseline
 must keep working offline.
 
 All public `sourceRoot` and `indexRoot` overrides are confined to the current

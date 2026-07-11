@@ -104,6 +104,8 @@ class TextExtractor(HTMLParser):
         if tag in self.SKIP_TAGS:
             self._skip_depth += 1
             return
+        if self._skip_depth:
+            return
         if tag == "title":
             self._in_title = True
         if re.fullmatch(r"h[1-6]", tag):
@@ -126,6 +128,8 @@ class TextExtractor(HTMLParser):
         tag = tag.lower()
         if tag in self.SKIP_TAGS and self._skip_depth > 0:
             self._skip_depth -= 1
+            return
+        if self._skip_depth:
             return
         if tag == "title":
             self._in_title = False

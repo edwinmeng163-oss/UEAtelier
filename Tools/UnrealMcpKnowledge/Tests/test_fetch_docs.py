@@ -38,6 +38,19 @@ class FetchDocsTests(unittest.TestCase):
         self.assertIn("# Top", text)
         self.assertIn("## Details", text)
 
+    def test_text_extractor_ignores_nested_markup_inside_skipped_regions(self) -> None:
+        extractor = fetch_docs.TextExtractor()
+        extractor.feed(
+            '<svg><h2>Hidden</h2><a href="/hidden">Secret</a></svg>'
+            '<p><a href="/visible">Visible</a></p>'
+        )
+        text = extractor.text()
+        self.assertNotIn("##", text)
+        self.assertNotIn("Hidden", text)
+        self.assertNotIn("Secret", text)
+        self.assertIn("Visible", text)
+        self.assertEqual(extractor.links, ["/visible"])
+
     def test_seed_engine_version_is_required_and_validated(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             seed_path = Path(temp_dir) / "seed.json"

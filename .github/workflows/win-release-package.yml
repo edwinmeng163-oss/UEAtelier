@@ -10,9 +10,10 @@ name: Windows Release Package
 # project endpoint/MCP SDK conformance smoke must pass before the tag is pushed.
 #
 # Manual trigger via workflow_dispatch is also supported for release re-runs,
-# back-filling Windows zips, or artifact-only candidates from an exact branch
-# SHA. Artifact discovery accepts the engine suffix emitted by the selected
-# revision's own packager.
+# re-running compatible historical releases, or artifact-only candidates from
+# an exact branch SHA. Tag mode requires the checked-out descriptor VersionName
+# to match, so mismatched legacy/hyphenated tags are not guaranteed backfills.
+# Artifact discovery accepts the engine suffix emitted by the selected revision.
 
 on:
   push:
@@ -78,6 +79,7 @@ jobs:
           ref: ${{ steps.target.outputs.checkout_ref }}
           fetch-depth: 1
           lfs: false
+          persist-credentials: false
 
       - name: Resolve and validate package version
         id: version
@@ -128,6 +130,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "validate_tool_registry.py failed" }
           python Tools/check_ue56_compat.py
           if ($LASTEXITCODE -ne 0) { throw "check_ue56_compat.py failed" }
+          python -m unittest discover -s Tools/UnrealMcpKnowledge/Tests -p "test_*.py"
+          if ($LASTEXITCODE -ne 0) { throw "UnrealMcpKnowledge Python tests failed" }
           # This historically named validator protects the UE 5.6 maintenance
           # floor and compat-shim discipline; it is not a primary-engine build.
           # Skip verify_package_integrity --root in pre-package: it requires
@@ -167,8 +171,10 @@ jobs:
 
       - name: Verify produced zip
         shell: pwsh
+        env:
+          ZIP_PATH: ${{ steps.package.outputs.zip_path }}
         run: |
-          python Tools/verify_package_integrity.py --zip "${{ steps.package.outputs.zip_path }}" --mode source --repo-root . --strict
+          python Tools/verify_package_integrity.py --zip $env:ZIP_PATH --mode source --repo-root . --strict
           if ($LASTEXITCODE -ne 0) { throw "verify_package_integrity --zip failed" }
 
       - name: Upload as workflow artifact
@@ -188,10 +194,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TARGET_TAG: ${{ steps.target.outputs.tag }}
+          ZIP_PATH: ${{ steps.package.outputs.zip_path }}
+          SHA_PATH: ${{ steps.package.outputs.sha_path }}
         run: |
           $tag = $env:TARGET_TAG
-          $zip = "${{ steps.package.outputs.zip_path }}"
-          $sha = "${{ steps.package.outputs.sha_path }}"
+          $zip = $env:ZIP_PATH
+          $sha = $env:SHA_PATH
 
           # Verify release exists; if not, the workflow artifact above still
           # carries the zip for manual attachment.

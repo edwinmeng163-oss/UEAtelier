@@ -169,6 +169,8 @@ Compare the `Get-FileHash` value with the hash in the `.sha256` sidecar.
 <UserProject>/Tools/UnrealMcpToolScaffoldStarters/
 <UserProject>/Tools/UnrealMcpToolScaffolds/
 <UserProject>/Tools/UnrealMcpToolRegistry/
+<UserProject>/Tools/unreal_mcp_fetch_docs.py
+<UserProject>/Tools/install_unrealmcp_to_project.py
 <UserProject>/Tools/UnrealMcpSkills/
 <UserProject>/Tools/UnrealMcpKnowledge/
 <UserProject>/Tools/UnrealMcpTests/
@@ -277,6 +279,8 @@ source-only パッケージもプロジェクトルート overlay になりま�
 <UserProject>/Tools/UnrealMcpToolScaffoldStarters/
 <UserProject>/Tools/UnrealMcpToolScaffolds/
 <UserProject>/Tools/UnrealMcpToolRegistry/
+<UserProject>/Tools/unreal_mcp_fetch_docs.py
+<UserProject>/Tools/install_unrealmcp_to_project.py
 <UserProject>/Tools/UnrealMcpSkills/
 <UserProject>/Tools/UnrealMcpKnowledge/
 <UserProject>/Tools/UnrealMcpTests/

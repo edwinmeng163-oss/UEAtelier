@@ -64,7 +64,7 @@ Rebuilds the local Saved/UnrealMcp/KnowledgeIndex/ JSONL index from fetched docs
     },
     "allowEmptyIndex": {
       "type": "boolean",
-      "description": "Allow an explicitly empty index for tests. By default, an empty refresh preserves the last-known-good index.",
+      "description": "Allow an explicitly empty index only when indexRoot is explicitly under Saved/UnrealMcp/Tests. By default, an empty refresh preserves the last-known-good index.",
       "default": false
     },
     "skipLowContent": {

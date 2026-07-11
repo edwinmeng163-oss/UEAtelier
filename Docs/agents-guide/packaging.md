@@ -20,6 +20,18 @@ primary engines and complete strict zip integrity, fresh-project install,
 endpoint smoke, and MCP SDK conformance on the `ue57-ue58` artifacts. The
 latest public release remains v0.34.0 until those gates finish.
 
+Because UE 5.7 and UE 5.8 reuse one host, clean all four shared build-product
+trees before each engine switch (not only platform/build subdirectories):
+
+```bash
+rm -rf Plugins/UnrealMcp/Binaries Plugins/UnrealMcp/Intermediate \
+  Examples/UEvolveExample57/Binaries Examples/UEvolveExample57/Intermediate
+```
+
+On PowerShell, remove the same four directories with `Remove-Item -Recurse
+-Force`. Stale UHT-generated headers can otherwise produce misleading
+`Z_Construct_UClass_*_NoRegister` or ABI/link errors after the switch.
+
 ## Build Commands
 
 macOS UE 5.7 primary-host build example:
@@ -166,8 +178,11 @@ gh workflow run win-release-package.yml \
 
 Blank-tag dispatch checks out the event's exact `GITHUB_SHA`, validates the
 descriptor version, and uploads only the 30-day Actions artifact. It does not
-attach to or create a GitHub release. A non-empty `tag` input retains the
-release/backfill behavior and must match `UnrealMcp.uplugin` `VersionName`.
+attach to or create a GitHub release. A non-empty `tag` input retains release
+upload behavior and must match `UnrealMcp.uplugin` `VersionName`. Historical
+tags whose descriptor version does not equal the tag (including some old
+hyphenated tags) are intentionally rejected rather than guaranteed as
+automated backfill targets.
 
 Manual fallback is documented in [WindowsPackaging](../WindowsPackaging.md).
 The Windows collaborator should:

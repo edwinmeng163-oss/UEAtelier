@@ -208,7 +208,8 @@ The current indexer emits `official-docs`, `versioned-doc`, `tool-registry`,
 `kindStatus` map. `runtime-memory` and `test-fixture` remain
 `reserved-not-active`; the enum remains unchanged. Verified extension outcomes
 currently remain in the `activity-log` source kind, but their card append now
-updates `cards.jsonl` and the Index v2 manifest as one verified atomic pair. A
+updates `cards.jsonl` and the Index v2 manifest through the same staged,
+verified, backup-recoverable pair transaction. A
 future dedicated `extension-outcome` enum remains an optional taxonomy change.
 
 ## 9. Per-launch session ID

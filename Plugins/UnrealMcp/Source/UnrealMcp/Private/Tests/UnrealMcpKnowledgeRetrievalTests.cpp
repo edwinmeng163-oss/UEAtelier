@@ -149,13 +149,30 @@ bool FUnrealMcpKnowledgeEngineVersionRankingTest::RunTest(const FString& Paramet
 		IFileManager::Get().DeleteDirectory(*TestRoot, false, true);
 	};
 
-	TestTrue(
-		TEXT("UE 5.7 source is written."),
-		WriteSource(TestRoot, TEXT("ue57.md"), TEXT("# Unreal Engine 5.7 Python API\n\nReference for Unreal Engine version 5.7.\n")));
-	TestTrue(
-		TEXT("UE 5.8 source is written."),
-		WriteSource(TestRoot, TEXT("ue58.md"), TEXT("# Unreal Engine 5.8 Python API\n\nReference for Unreal Engine version 5.8.\n")));
-	TestFalse(TEXT("Engine-version fixture refresh succeeds."), Refresh(TestRoot).bIsError);
+	const FString DocsRoot = FPaths::Combine(SourceRoot(TestRoot), TEXT("official"));
+	TestTrue(TEXT("Engine-version fixture directory is created."), IFileManager::Get().MakeDirectory(*DocsRoot, true));
+	TestTrue(TEXT("UE 5.7 source is written."), FFileHelper::SaveStringToFile(
+		TEXT("# Unreal Engine 5.7 Python API\n\nReference for Unreal Engine version 5.7."),
+		*FPaths::Combine(DocsRoot, TEXT("ue57.txt"))));
+	TestTrue(TEXT("UE 5.8 source is written."), FFileHelper::SaveStringToFile(
+		TEXT("# Unreal Engine 5.8 Python API\n\nReference for Unreal Engine version 5.8."),
+		*FPaths::Combine(DocsRoot, TEXT("ue58.txt"))));
+	const FString DocumentsJsonl =
+		TEXT("{\"id\":\"ue57\",\"title\":\"UE 5.7 Python API\",\"category\":\"python\",\"engineVersion\":\"5.7\",\"textPath\":\"ue57.txt\"}\n")
+		TEXT("{\"id\":\"ue58\",\"title\":\"UE 5.8 Python API\",\"category\":\"python\",\"engineVersion\":\"5.8\",\"textPath\":\"ue58.txt\"}\n");
+	TestTrue(TEXT("Engine-version documents.jsonl is written."), FFileHelper::SaveStringToFile(
+		DocumentsJsonl,
+		*FPaths::Combine(DocsRoot, TEXT("documents.jsonl"))));
+	FJsonObject RefreshArgs;
+	RefreshArgs.SetStringField(TEXT("sourceRoot"), SourceRoot(TestRoot));
+	RefreshArgs.SetStringField(TEXT("indexRoot"), IndexRoot(TestRoot));
+	RefreshArgs.SetBoolField(TEXT("includeOfficialDocs"), true);
+	RefreshArgs.SetBoolField(TEXT("includePromotedSources"), false);
+	RefreshArgs.SetBoolField(TEXT("includeVersionedDocs"), false);
+	RefreshArgs.SetBoolField(TEXT("includeToolRegistry"), false);
+	RefreshArgs.SetBoolField(TEXT("includeActivityLog"), false);
+	RefreshArgs.SetBoolField(TEXT("includeSkills"), false);
+	TestFalse(TEXT("Engine-version fixture refresh succeeds."), UnrealMcp::KnowledgeIndexRefresh(RefreshArgs).bIsError);
 
 	const FUnrealMcpExecutionResult Result = Search(TestRoot, TEXT("UE5.8 Python API"), 2);
 	TestFalse(TEXT("Engine-version search succeeds."), Result.bIsError);
@@ -163,8 +180,12 @@ bool FUnrealMcpKnowledgeEngineVersionRankingTest::RunTest(const FString& Paramet
 	TestTrue(TEXT("Engine-version search returns at least one result."), !SourcePaths.IsEmpty());
 	if (!SourcePaths.IsEmpty())
 	{
-		TestEqual(TEXT("Explicit UE5.8 query ranks the UE 5.8 source first."), FPaths::GetCleanFilename(SourcePaths[0]), FString(TEXT("ue58.md")));
+		TestEqual(TEXT("Explicit UE5.8 query ranks the UE 5.8 source first."), FPaths::GetCleanFilename(SourcePaths[0]), FString(TEXT("ue58.txt")));
 	}
+	TestFalse(TEXT("Explicit UE5.8 query excludes the UE 5.7 card."), ContainsFilename(SourcePaths, TEXT("ue57.txt")));
+	const TArray<FString> PlainVersionPaths = ResultSourcePaths(Search(TestRoot, TEXT("5.8 Python API"), 2));
+	TestTrue(TEXT("Indexed plain 5.8 is recognized as an engine version."), ContainsFilename(PlainVersionPaths, TEXT("ue58.txt")));
+	TestFalse(TEXT("Plain 5.8 excludes the UE 5.7 card."), ContainsFilename(PlainVersionPaths, TEXT("ue57.txt")));
 	return true;
 }
 
@@ -216,6 +237,105 @@ bool FUnrealMcpKnowledgeMultiEngineVersionQueryTest::RunTest(const FString& Para
 	const TArray<FString> SourcePaths = ResultSourcePaths(Result);
 	TestTrue(TEXT("Multi-engine comparison keeps the UE 5.7 card."), ContainsFilename(SourcePaths, TEXT("ue57.txt")));
 	TestTrue(TEXT("Multi-engine comparison keeps the UE 5.8 card."), ContainsFilename(SourcePaths, TEXT("ue58.txt")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FUnrealMcpKnowledgeNonEngineNumericQueryTest,
+	"UnrealMcp.Knowledge.Retrieval.NonEngineNumericTokensKeepVersionedCards",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FUnrealMcpKnowledgeNonEngineNumericQueryTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace UnrealMcpKnowledgeRetrievalTests;
+	const FString TestRoot = MakeRoot(TEXT("non_engine_numeric"));
+	IFileManager::Get().DeleteDirectory(*TestRoot, false, true);
+	ON_SCOPE_EXIT { IFileManager::Get().DeleteDirectory(*TestRoot, false, true); };
+
+	const FString DocsRoot = FPaths::Combine(SourceRoot(TestRoot), TEXT("official"));
+	IFileManager::Get().MakeDirectory(*DocsRoot, true);
+	TestTrue(TEXT("UE 5.7 numeric fixture is written."), FFileHelper::SaveStringToFile(
+		TEXT("Python release workflow changes."), *FPaths::Combine(DocsRoot, TEXT("ue57.txt"))));
+	TestTrue(TEXT("UE 5.8 numeric fixture is written."), FFileHelper::SaveStringToFile(
+		TEXT("Python release workflow changes."), *FPaths::Combine(DocsRoot, TEXT("ue58.txt"))));
+	const FString DocumentsJsonl =
+		TEXT("{\"id\":\"numeric57\",\"title\":\"Python changes\",\"category\":\"python\",\"engineVersion\":\"5.7\",\"textPath\":\"ue57.txt\"}\n")
+		TEXT("{\"id\":\"numeric58\",\"title\":\"Python changes\",\"category\":\"python\",\"engineVersion\":\"5.8\",\"textPath\":\"ue58.txt\"}\n");
+	TestTrue(TEXT("Numeric documents.jsonl is written."), FFileHelper::SaveStringToFile(
+		DocumentsJsonl, *FPaths::Combine(DocsRoot, TEXT("documents.jsonl"))));
+	FJsonObject RefreshArgs;
+	RefreshArgs.SetStringField(TEXT("sourceRoot"), SourceRoot(TestRoot));
+	RefreshArgs.SetStringField(TEXT("indexRoot"), IndexRoot(TestRoot));
+	RefreshArgs.SetBoolField(TEXT("includeOfficialDocs"), true);
+	RefreshArgs.SetBoolField(TEXT("includePromotedSources"), false);
+	RefreshArgs.SetBoolField(TEXT("includeVersionedDocs"), false);
+	RefreshArgs.SetBoolField(TEXT("includeToolRegistry"), false);
+	RefreshArgs.SetBoolField(TEXT("includeActivityLog"), false);
+	RefreshArgs.SetBoolField(TEXT("includeSkills"), false);
+	TestFalse(TEXT("Numeric fixture refresh succeeds."), UnrealMcp::KnowledgeIndexRefresh(RefreshArgs).bIsError);
+
+	const TArray<FString> Paths = ResultSourcePaths(Search(TestRoot, TEXT("what changed in 0.35 for python 3.11"), 10));
+	TestTrue(TEXT("Product/Python numeric query keeps the UE 5.7 card."), ContainsFilename(Paths, TEXT("ue57.txt")));
+	TestTrue(TEXT("Product/Python numeric query keeps the UE 5.8 card."), ContainsFilename(Paths, TEXT("ue58.txt")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FUnrealMcpKnowledgeCjkLatinTokenizationTest,
+	"UnrealMcp.Knowledge.Retrieval.CjkBigramsAndEmbeddedLatin",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FUnrealMcpKnowledgeCjkLatinTokenizationTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace UnrealMcpKnowledgeRetrievalTests;
+	const FString TestRoot = MakeRoot(TEXT("cjk_latin"));
+	IFileManager::Get().DeleteDirectory(*TestRoot, false, true);
+	ON_SCOPE_EXIT { IFileManager::Get().DeleteDirectory(*TestRoot, false, true); };
+
+	TestTrue(TEXT("CJK/Latin source is written."), WriteSource(
+		TestRoot,
+		TEXT("cjk_ui.md"),
+		TEXT("# 控件说明\n\n在UI控件中调整用户界面，然后添加确认按钮。\n")));
+	TestTrue(TEXT("CJK decoy source is written."), WriteSource(
+		TestRoot,
+		TEXT("build.md"),
+		TEXT("# 构建说明\n\n编译构建流水线。\n")));
+	TestFalse(TEXT("CJK fixture refresh succeeds."), Refresh(TestRoot).bIsError);
+
+	const TArray<FString> BigramPaths = ResultSourcePaths(Search(TestRoot, TEXT("界面按钮")));
+	TestTrue(TEXT("Overlapping CJK bigrams retrieve the intended card."), ContainsFilename(BigramPaths, TEXT("cjk_ui.md")));
+	const TArray<FString> UiPaths = ResultSourcePaths(Search(TestRoot, TEXT("ui")));
+	TestTrue(TEXT("Latin UI embedded in CJK prose remains retrievable."), ContainsFilename(UiPaths, TEXT("cjk_ui.md")));
+	TestFalse(TEXT("UI does not retrieve the build decoy."), ContainsFilename(UiPaths, TEXT("build.md")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FUnrealMcpKnowledgeOriginalTokenRankingTest,
+	"UnrealMcp.Knowledge.Retrieval.OriginalTokenOutranksSynonym",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FUnrealMcpKnowledgeOriginalTokenRankingTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace UnrealMcpKnowledgeRetrievalTests;
+	const FString TestRoot = MakeRoot(TEXT("original_token_rank"));
+	IFileManager::Get().DeleteDirectory(*TestRoot, false, true);
+	ON_SCOPE_EXIT { IFileManager::Get().DeleteDirectory(*TestRoot, false, true); };
+
+	TestTrue(TEXT("Exact widget source is written."), WriteSource(
+		TestRoot, TEXT("widget.md"), TEXT("# Widget authoring\n\nWidget layout reference.\n")));
+	TestTrue(TEXT("Synonym-only UI source is written."), WriteSource(
+		TestRoot, TEXT("ui.md"), TEXT("# UI authoring\n\nUI layout reference.\n")));
+	TestFalse(TEXT("Original-token fixture refresh succeeds."), Refresh(TestRoot).bIsError);
+	const TArray<FString> Paths = ResultSourcePaths(Search(TestRoot, TEXT("widget"), 2));
+	TestTrue(TEXT("Original-token query returns results."), !Paths.IsEmpty());
+	if (!Paths.IsEmpty())
+	{
+		TestEqual(TEXT("Original widget token outranks expanded UI synonym."), FPaths::GetCleanFilename(Paths[0]), FString(TEXT("widget.md")));
+	}
 	return true;
 }
 

@@ -52,7 +52,7 @@ Current core capabilities:
 - Multi-provider chat through OpenAI Responses, OpenAI Chat Compat for Kimi/GLM/DeepSeek/Qwen/Ollama, Anthropic Claude, Codex CLI, and the Codex Desktop bridge.
 - Developer-only core extension pipeline: descriptor-first scaffolds, patch validation, apply with backup manifest, UBT build, fixture test, and rollback to manifest.
 - Tool export/import packages for cross-developer transfer through `Saved/UnrealMcp/Packages/*.zip`.
-- Local RAG with KnowledgeIndex v2 atomic/last-known-good writes, machine-readable `missing|empty|stale|ready|corrupt` status, ActivityLog indexing off by default, version-aware/diversity-aware ranking, rank-aware evals, and separate UE 5.7 / 5.8 official-source manifests.
+- Local RAG with KnowledgeIndex v2 staged, verified, recoverable last-known-good writes, machine-readable `missing|empty|stale|ready|corrupt` status, ActivityLog indexing off by default, version-aware/diversity-aware ranking, rank-aware evals, and separate UE 5.7 / 5.8 official-source manifests.
 - Multi-engine and cross-platform discipline with UE 5.7 and UE 5.8 as primary targets and UE 5.6 as a maintenance compile canary on macOS and Windows.
 
 For a quick start, read `Docs/Release-2026-07.md`, then `AGENTS.md`, then the
@@ -95,7 +95,7 @@ project memory 和 supervisor 恢复链路。
 - 多 provider Chat：OpenAI Responses、OpenAI Chat Compat for Kimi/GLM/DeepSeek/Qwen/Ollama、Anthropic Claude、Codex CLI 和 Codex Desktop bridge。
 - developer-only core extension pipeline：descriptor-first scaffold、patch validation、带备份 manifest 的 apply、UBT build、fixture test，以及 rollback to manifest。
 - 通过 `Saved/UnrealMcp/Packages/*.zip` 导出/导入工具包，支持跨开发者传递。
-- 本地 RAG：KnowledgeIndex v2 提供 atomic/last-known-good 写入、`missing|empty|stale|ready|corrupt` 机器可读状态；ActivityLog 默认不索引，并支持版本/来源多样性排名、rank-aware eval 以及分离的 UE 5.7 / 5.8 官方源 manifest。
+- 本地 RAG：KnowledgeIndex v2 提供分阶段、校验并可恢复的 last-known-good 写入、`missing|empty|stale|ready|corrupt` 机器可读状态；ActivityLog 默认不索引，并支持版本/来源多样性排名、rank-aware eval 以及分离的 UE 5.7 / 5.8 官方源 manifest。
 - 多引擎和跨平台兼容纪律以 UE 5.7 和 UE 5.8 为主要目标，UE 5.6 仅作为 macOS 与 Windows 的维护性编译 canary。
 
 快速开始请先阅读 `Docs/Release-2026-07.md`，再读 `AGENTS.md`，然后参考本
@@ -138,7 +138,7 @@ project memory、supervisor recovery という安全レールの下で扱いま�
 - OpenAI Responses、Kimi/GLM/DeepSeek/Qwen/Ollama 向け OpenAI Chat Compat、Anthropic Claude、Codex CLI、Codex Desktop bridge による multi-provider chat に対応します。
 - developer-only core extension pipeline: descriptor-first scaffolds、patch validation、backup manifest 付き apply、UBT build、fixture test、rollback to manifest を扱います。
 - `Saved/UnrealMcp/Packages/*.zip` の tool export/import packages により、開発者間で転送できます。
-- local RAG は KnowledgeIndex v2 による atomic/last-known-good write、`missing|empty|stale|ready|corrupt` の machine-readable status を備えます。ActivityLog indexing は既定で off とし、version/source diversity ranking、rank-aware eval、分離された UE 5.7 / 5.8 official-source manifest に対応します。
+- local RAG は KnowledgeIndex v2 による staged / verified / recoverable な last-known-good write、`missing|empty|stale|ready|corrupt` の machine-readable status を備えます。ActivityLog indexing は既定で off とし、version/source diversity ranking、rank-aware eval、分離された UE 5.7 / 5.8 official-source manifest に対応します。
 - multi-engine / cross-platform 互換性は UE 5.7 と UE 5.8 を主要対象とし、UE 5.6 は macOS / Windows の maintenance compile canary としてのみ扱います。
 
 quick start には `Docs/Release-2026-07.md`、続いて `AGENTS.md`、さらにこの
@@ -603,8 +603,10 @@ follow the schema in
 `Schemas/UnrealMcpKnowledgeCard.schema.json`. See
 [Knowledge And RAG Plan](Docs/KnowledgeRag.md).
 
-KnowledgeIndex v2 uses same-directory atomic replacement and preserves the
-last-known-good index when a real refresh would produce zero cards. Its
+KnowledgeIndex v2 stages and verifies same-directory candidates, keeps a
+verified backup pair during replacement, and restores that last-known-good
+index after an interrupted or failed replacement. A real refresh that would
+produce zero cards also preserves the last-known-good pair. Its
 manifest records hashes, freshness/build metadata, and source-kind/engine
 counts; search reports `missing`, `empty`, `stale`, `ready`, or `corrupt`
 without parsing human-readable error text. ActivityLog indexing is opt-in

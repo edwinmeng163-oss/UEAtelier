@@ -317,6 +317,183 @@ bool FUnrealMcpKnowledgeOutcomeAppendIntegrityTest::RunTest(const FString& Param
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FUnrealMcpKnowledgeIndexInterruptedWriteRecoveryTest,
+	"UnrealMcp.Knowledge.IndexReliability.InterruptedWriteRestoresVerifiedBackup",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FUnrealMcpKnowledgeIndexInterruptedWriteRecoveryTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace UnrealMcpKnowledgeIndexReliabilityTests;
+	const FString TestRoot = MakeTestRoot(TEXT("interrupted_write_recovery"));
+	const FString IndexRoot = IndexRootForRoot(TestRoot);
+	const FString CardsPath = FPaths::Combine(IndexRoot, TEXT("cards.jsonl"));
+	const FString ManifestPath = FPaths::Combine(IndexRoot, TEXT("index.json"));
+	const FString CardsBackupPath = CardsPath + TEXT(".bak");
+	const FString ManifestBackupPath = ManifestPath + TEXT(".bak");
+	const FString OrphanTempPath = CardsPath + TEXT(".tmp.orphan");
+	IFileManager::Get().DeleteDirectory(*TestRoot, false, true);
+	ON_SCOPE_EXIT
+	{
+		UnrealMcp::SetKnowledgeIndexWriteInterruptionStageForTests(0);
+		IFileManager::Get().DeleteDirectory(*TestRoot, false, true);
+	};
+
+	const FString SourcePath = SourcePathForRoot(TestRoot);
+	IFileManager::Get().MakeDirectory(*FPaths::GetPath(SourcePath), true);
+	TestTrue(TEXT("Initial recovery source is written."), FFileHelper::SaveStringToFile(
+		FString::Printf(TEXT("# Recovery fixture\n\n%s\n"), *Sentinel),
+		*SourcePath,
+		FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM));
+	FJsonObject RefreshArgs;
+	ConfigureIsolatedRefresh(RefreshArgs, TestRoot);
+	TestFalse(TEXT("Initial recovery refresh succeeds."), UnrealMcp::KnowledgeIndexRefresh(RefreshArgs).bIsError);
+	FString OriginalCards;
+	FString OriginalManifest;
+	TestTrue(TEXT("Original recovery cards are readable."), FFileHelper::LoadFileToString(OriginalCards, *CardsPath));
+	TestTrue(TEXT("Original recovery manifest is readable."), FFileHelper::LoadFileToString(OriginalManifest, *ManifestPath));
+
+	TestTrue(TEXT("Replacement recovery source is written."), FFileHelper::SaveStringToFile(
+		TEXT("# Replacement fixture\n\nUEATELIER_RAG_REPLACEMENT_SENTINEL\n"),
+		*SourcePath,
+		FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM));
+	UnrealMcp::SetKnowledgeIndexWriteInterruptionStageForTests(1);
+	const FUnrealMcpExecutionResult InterruptedRefresh = UnrealMcp::KnowledgeIndexRefresh(RefreshArgs);
+	TestTrue(TEXT("Injected interruption fails the refresh."), InterruptedRefresh.bIsError);
+	TestTrue(TEXT("Interrupted refresh reports the simulated boundary."), InterruptedRefresh.Text.Contains(TEXT("Simulated knowledge index interruption")));
+	TestTrue(TEXT("Cards backup survives the interruption."), FPaths::FileExists(CardsBackupPath));
+	TestTrue(TEXT("Manifest backup survives the interruption."), FPaths::FileExists(ManifestBackupPath));
+	TestTrue(TEXT("Orphan transaction temp is written."), FFileHelper::SaveStringToFile(TEXT("orphan"), *OrphanTempPath));
+
+	FJsonObject SearchArgs;
+	SearchArgs.SetStringField(TEXT("query"), Sentinel);
+	SearchArgs.SetStringField(TEXT("indexRoot"), IndexRoot);
+	const FUnrealMcpExecutionResult SearchResult = UnrealMcp::KnowledgeSearch(SearchArgs);
+	TestFalse(TEXT("Next load restores and searches the verified backup."), SearchResult.bIsError);
+	TestEqual(TEXT("Changed source makes restored old index stale."), StructuredString(SearchResult, TEXT("indexStatus")), FString(TEXT("stale")));
+	TestTrue(TEXT("Restored old sentinel is returned."), SearchResult.StructuredContent.IsValid()
+		&& SearchResult.StructuredContent->GetNumberField(TEXT("resultCount")) > 0.0);
+
+	FString RestoredCards;
+	FString RestoredManifest;
+	TestTrue(TEXT("Restored cards are readable."), FFileHelper::LoadFileToString(RestoredCards, *CardsPath));
+	TestTrue(TEXT("Restored manifest is readable."), FFileHelper::LoadFileToString(RestoredManifest, *ManifestPath));
+	TestEqual(TEXT("Restored cards are byte-identical to last-known-good."), RestoredCards, OriginalCards);
+	TestEqual(TEXT("Restored manifest is byte-identical to last-known-good."), RestoredManifest, OriginalManifest);
+	TestFalse(TEXT("Cards backup is removed after verified recovery."), FPaths::FileExists(CardsBackupPath));
+	TestFalse(TEXT("Manifest backup is removed after verified recovery."), FPaths::FileExists(ManifestBackupPath));
+	TestFalse(TEXT("Orphan transaction temp is cleaned on load."), FPaths::FileExists(OrphanTempPath));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FUnrealMcpKnowledgeOutcomeAppendRefusalTest,
+	"UnrealMcp.Knowledge.IndexReliability.OutcomeAppendRefusesStaleAndCorrupt",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FUnrealMcpKnowledgeOutcomeAppendRefusalTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace UnrealMcpKnowledgeIndexReliabilityTests;
+	const FString TestRoot = MakeTestRoot(TEXT("outcome_append_refusal"));
+	const FString SourcePath = SourcePathForRoot(TestRoot);
+	const FString IndexRoot = IndexRootForRoot(TestRoot);
+	const FString CardsPath = FPaths::Combine(IndexRoot, TEXT("cards.jsonl"));
+	const FString ManifestPath = FPaths::Combine(IndexRoot, TEXT("index.json"));
+	IFileManager::Get().DeleteDirectory(*TestRoot, false, true);
+	ON_SCOPE_EXIT { IFileManager::Get().DeleteDirectory(*TestRoot, false, true); };
+
+	IFileManager::Get().MakeDirectory(*FPaths::GetPath(SourcePath), true);
+	TestTrue(TEXT("Append-refusal source is written."), FFileHelper::SaveStringToFile(
+		TEXT("# Append refusal fixture\n\nBaseline.\n"), *SourcePath));
+	FJsonObject RefreshArgs;
+	ConfigureIsolatedRefresh(RefreshArgs, TestRoot);
+	TestFalse(TEXT("Append-refusal refresh succeeds."), UnrealMcp::KnowledgeIndexRefresh(RefreshArgs).bIsError);
+	FString ReadyCards;
+	FString ReadyManifest;
+	FFileHelper::LoadFileToString(ReadyCards, *CardsPath);
+	FFileHelper::LoadFileToString(ReadyManifest, *ManifestPath);
+
+	TestTrue(TEXT("Source is changed to make the index stale."), FFileHelper::SaveStringToFile(
+		TEXT("# Append refusal fixture\n\nChanged after indexing.\n"), *SourcePath));
+	FString FailureReason;
+	TestFalse(TEXT("Outcome append refuses a stale index."), UnrealMcp::WriteOutcomeKnowledgeCard(
+		TEXT("stale-refusal"), TEXT("Stale refusal"), TEXT("Must not append"), SourcePath, {}, FailureReason, IndexRoot));
+	TestTrue(TEXT("Stale refusal is explicit."), FailureReason.Contains(TEXT("stale knowledge index")));
+	FString AfterStaleCards;
+	FString AfterStaleManifest;
+	FFileHelper::LoadFileToString(AfterStaleCards, *CardsPath);
+	FFileHelper::LoadFileToString(AfterStaleManifest, *ManifestPath);
+	TestEqual(TEXT("Stale refusal leaves cards unchanged."), AfterStaleCards, ReadyCards);
+	TestEqual(TEXT("Stale refusal leaves manifest unchanged."), AfterStaleManifest, ReadyManifest);
+
+	TestFalse(TEXT("Refresh after source change succeeds."), UnrealMcp::KnowledgeIndexRefresh(RefreshArgs).bIsError);
+	FString CorruptCards;
+	FString CorruptManifest;
+	FFileHelper::LoadFileToString(CorruptCards, *CardsPath);
+	FFileHelper::LoadFileToString(CorruptManifest, *ManifestPath);
+	CorruptCards += TEXT("not-json\n");
+	TestTrue(TEXT("Cards are corrupted without changing the manifest."), FFileHelper::SaveStringToFile(CorruptCards, *CardsPath));
+	FailureReason.Reset();
+	TestFalse(TEXT("Outcome append refuses a corrupt index."), UnrealMcp::WriteOutcomeKnowledgeCard(
+		TEXT("corrupt-refusal"), TEXT("Corrupt refusal"), TEXT("Must not append"), SourcePath, {}, FailureReason, IndexRoot));
+	TestTrue(TEXT("Corrupt refusal reports integrity failure."), !FailureReason.IsEmpty());
+	FString AfterCorruptCards;
+	FString AfterCorruptManifest;
+	FFileHelper::LoadFileToString(AfterCorruptCards, *CardsPath);
+	FFileHelper::LoadFileToString(AfterCorruptManifest, *ManifestPath);
+	TestEqual(TEXT("Corrupt refusal leaves cards unchanged."), AfterCorruptCards, CorruptCards);
+	TestEqual(TEXT("Corrupt refusal leaves manifest unchanged."), AfterCorruptManifest, CorruptManifest);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FUnrealMcpKnowledgeAllowEmptyIndexGateTest,
+	"UnrealMcp.Knowledge.IndexReliability.AllowEmptyIndexRequiresIsolatedTestRoot",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FUnrealMcpKnowledgeAllowEmptyIndexGateTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace UnrealMcpKnowledgeIndexReliabilityTests;
+	const FString TestRoot = MakeTestRoot(TEXT("allow_empty_gate"));
+	IFileManager::Get().DeleteDirectory(*TestRoot, false, true);
+	ON_SCOPE_EXIT { IFileManager::Get().DeleteDirectory(*TestRoot, false, true); };
+
+	auto ConfigureEmpty = [](FJsonObject& Args)
+	{
+		Args.SetBoolField(TEXT("includeOfficialDocs"), false);
+		Args.SetBoolField(TEXT("includePromotedSources"), false);
+		Args.SetBoolField(TEXT("includeVersionedDocs"), false);
+		Args.SetBoolField(TEXT("includeToolRegistry"), false);
+		Args.SetBoolField(TEXT("includeActivityLog"), false);
+		Args.SetBoolField(TEXT("includeSkills"), false);
+		Args.SetBoolField(TEXT("allowEmptyIndex"), true);
+	};
+
+	FJsonObject DefaultRootArgs;
+	ConfigureEmpty(DefaultRootArgs);
+	const FUnrealMcpExecutionResult DefaultRootResult = UnrealMcp::KnowledgeIndexRefresh(DefaultRootArgs);
+	TestTrue(TEXT("allowEmptyIndex rejects an implicit production root."), DefaultRootResult.bIsError);
+	TestEqual(TEXT("Implicit-root rejection identifies allowEmptyIndex."), StructuredString(DefaultRootResult, TEXT("rejectedField")), FString(TEXT("allowEmptyIndex")));
+
+	FJsonObject ProductionRootArgs;
+	ConfigureEmpty(ProductionRootArgs);
+	ProductionRootArgs.SetStringField(TEXT("indexRoot"), FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UnrealMcp/KnowledgeIndex-empty-test")));
+	const FUnrealMcpExecutionResult ProductionRootResult = UnrealMcp::KnowledgeIndexRefresh(ProductionRootArgs);
+	TestTrue(TEXT("allowEmptyIndex rejects an explicit non-test root."), ProductionRootResult.bIsError);
+
+	FJsonObject IsolatedArgs;
+	ConfigureEmpty(IsolatedArgs);
+	IsolatedArgs.SetStringField(TEXT("sourceRoot"), FPaths::Combine(TestRoot, TEXT("empty-source")));
+	IsolatedArgs.SetStringField(TEXT("indexRoot"), IndexRootForRoot(TestRoot));
+	const FUnrealMcpExecutionResult IsolatedResult = UnrealMcp::KnowledgeIndexRefresh(IsolatedArgs);
+	TestFalse(TEXT("allowEmptyIndex accepts an explicit root under Saved/UnrealMcp/Tests."), IsolatedResult.bIsError);
+	TestEqual(TEXT("Intentional isolated empty index reports empty."), StructuredString(IsolatedResult, TEXT("indexStatus")), FString(TEXT("empty")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FUnrealMcpKnowledgeSavedPathContainmentTest,
 	"UnrealMcp.Knowledge.IndexReliability.ProjectSavedPathContainment",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

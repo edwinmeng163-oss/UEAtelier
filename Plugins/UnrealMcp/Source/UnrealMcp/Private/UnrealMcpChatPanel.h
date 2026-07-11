@@ -168,6 +168,7 @@ private:
 	FString LastLogText;
 	mutable FString LastRagContextPrompt;
 	mutable FString LastRagContextBlock;
+	mutable bool bRagAutoRefreshFailedThisSession = false;
 	bool bAssistantRequestInFlight = false;
 	FDateTime ActiveAssistantRequestStartTime;
 	bool bHasInjectedPersistedContextThisSession = false;

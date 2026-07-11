@@ -83,7 +83,7 @@ compile canary during this transition, not a v0.35 primary release gate.
 ```bash
 # UE 5.7 example host (canonical target name is MyProjectEditor, NOT UEvolveExample57Editor)
 rm -rf Plugins/UnrealMcp/Binaries Plugins/UnrealMcp/Intermediate \
-  Examples/UEvolveExample57/Binaries/Mac Examples/UEvolveExample57/Intermediate/Build/Mac
+  Examples/UEvolveExample57/Binaries Examples/UEvolveExample57/Intermediate
 "/Users/Shared/Epic Games/UE_5.7/Engine/Build/BatchFiles/Mac/Build.sh" \
   MyProjectEditor Mac Development \
   -project="$(pwd)/Examples/UEvolveExample57/UEvolveExample57.uproject" \
@@ -91,7 +91,7 @@ rm -rf Plugins/UnrealMcp/Binaries Plugins/UnrealMcp/Intermediate \
 
 # UE 5.8 reuses the same source/content host; clean before switching engines
 rm -rf Plugins/UnrealMcp/Binaries Plugins/UnrealMcp/Intermediate \
-  Examples/UEvolveExample57/Binaries/Mac Examples/UEvolveExample57/Intermediate/Build/Mac
+  Examples/UEvolveExample57/Binaries Examples/UEvolveExample57/Intermediate
 "/Users/Shared/Epic Games/UE_5.8/Engine/Build/BatchFiles/Mac/Build.sh" \
   MyProjectEditor Mac Development \
   -project="$(pwd)/Examples/UEvolveExample57/UEvolveExample57.uproject" \

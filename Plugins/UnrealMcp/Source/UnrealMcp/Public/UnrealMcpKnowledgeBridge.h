@@ -6,6 +6,10 @@ class FJsonObject;
 
 namespace UnrealMcp
 {
+#if WITH_DEV_AUTOMATION_TESTS
+	void SetKnowledgeIndexWriteInterruptionStageForTests(int32 Stage);
+#endif
+
 	TArray<TSharedPtr<FJsonObject>> BuildEvidenceForTask(
 		const FString& TaskQuery,
 		int32 TopN = 3,

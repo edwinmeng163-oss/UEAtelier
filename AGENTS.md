@@ -33,6 +33,9 @@ add a duplicate multi-gigabyte UE 5.8 content host.
 Multi-engine discipline:
 
 - All `#if ENGINE_*_VERSION` goes in `UnrealMcpEngineCompat.h`.
+- Before switching the shared `Examples/UEvolveExample57` host between UE 5.7
+  and UE 5.8, delete both the plugin and host `Binaries/` and `Intermediate/`
+  directories. Partial platform/build-subdirectory cleanup is insufficient.
 - Run `Tools/install_git_hooks.sh` once after clone.
 - `EAiProviderKind` values are append-only; do not renumber.
 
@@ -160,7 +163,8 @@ drafts unless explicitly asked.
   vetted-context smoke, persisted marker, and fail-closed audit. Depth=1 and
   `user.*` targets remain forbidden.
 - RAG/recommendation, memory, skills, Task Atlas, and verification:
-  KnowledgeIndex v2 with last-known-good preservation, atomic file replacement,
+  KnowledgeIndex v2 with staged/verified replacement and recoverable
+  last-known-good backup pairs,
   `missing|empty|stale|ready|corrupt` status, source/engine counts and hashes;
   boundary-aware/version-aware lexical search, source-kind/engine diversity,
   rank-aware evals, tool/workflow recommend, project memory CRUD,
@@ -210,7 +214,9 @@ fixes `ui`-inside-`build` and version-token ranking, reserves source/engine
 diversity under the card cap, adds rank-aware eval assertions, and confines
 RAG roots, recursive scans, manifest `textPath` reads, fixed index leaves,
 eval files, and source-fingerprint metadata probes without following symlinks
-or reparse points. The root host now targets 5.7;
+or reparse points. R1 adds interruption recovery, deterministic CJK/Latin
+tokenization, known-engine-only numeric filtering, isolated `allowEmptyIndex`,
+Chat refresh backoff, skipped-HTML cleanup, and Windows CI hardening. The root host now targets 5.7;
 `project_version_migration` accepts primary 5.7/5.8 and
 maintenance 5.6. Registry count stays 190 and validation is 190/190. Detailed
 development notes are in `Docs/Development-0.35.md`.
