@@ -1,6 +1,6 @@
 # UEAtelier v0.35 Development Track
 
-Status: in development as of 2026-07-10. This document records verified branch
+Status: in development as of 2026-07-14. This document records verified branch
 state; it is not a public-release announcement. The latest public release
 remains v0.34.0 until packaging and cross-platform release gates finish.
 
@@ -8,8 +8,8 @@ remains v0.34.0 until packaging and cross-platform release gates finish.
 
 | Engine | v0.35 tier | Current evidence |
 | --- | --- | --- |
-| UE 5.8 | primary | clean Example57-host UBT; RAG 11/11; Gate D 1/1; EngineCompat 2/2; migration 1/1 |
-| UE 5.7 | primary | clean Example57-host UBT; RAG 11/11; Gate D 1/1; EngineCompat 2/2; migration 1/1 |
+| UE 5.8 | primary | clean Example57-host UBT; RAG 17/17; Gate D 1/1; EngineCompat 2/2; migration 1/1 |
+| UE 5.7 | primary | clean Example57-host UBT; RAG 17/17; Gate D 1/1; EngineCompat 2/2; migration 1/1 |
 | UE 5.6 | maintenance | compile-time floor retained; not a primary v0.35 release gate |
 
 The root `UEvolve.uproject` now uses `EngineAssociation` `5.7`.
@@ -49,6 +49,10 @@ v0.35 changes that contract:
   replacement. A verified `.bak` pair remains until the new pair verifies;
   failed commits restore it immediately, and the next load auto-recovers it
   after a process interruption. Transaction temps are cleaned on load/write.
+- A warm read first compares both pair files' paths, sizes, and timestamps. An
+  unchanged cache hit skips recovery, hashing, JSONL parsing, and transaction
+  temp scanning on the game thread; a cold cache or either changed pair file
+  still runs recovery and full verification before caching cards.
 - Index schema `UEvolve.KnowledgeIndex.v2` records `buildId`,
   `generatedAtUtc`, `sourceFingerprint`, card/source/engine counts,
   deduplication/truncation counts, and build parameters.
@@ -66,7 +70,8 @@ v0.35 changes that contract:
   nested example host; the fallback is limited to that canonical eval root.
 - Verified outcome-card appends now rewrite `cards.jsonl` and `index.json` as
   one checked pair, update the v2 hash/count/fingerprint metadata, and refuse
-  to hide a stale or corrupt base index.
+  to hide a stale or corrupt base index. Append preflight attempts verified
+  `.bak` recovery before rejecting a missing-current-file crash window.
 - Public knowledge source/index overrides are confined to the current
   project's `Saved` directory, eval JSON reads are project/shared-eval only,
   and traversal/absolute-path escapes fail closed. Recursive source/eval scans
@@ -107,11 +112,12 @@ URLs into card text.
 
 - `python3 Tools/validate_tool_registry.py`: 190 tools, issueCount 0, mirror
   byte-identical (the 79 non-strict dispatch warnings are the existing baseline).
-- `python3 Tools/check_ue56_compat.py --min-engine 5.7`: 0 errors, 0 warnings.
+- `python3 Tools/check_ue56_compat.py` and `--min-engine 5.7`: 0 errors,
+  0 warnings at both the 5.6 floor and 5.7 transition gate.
 - Python tests: fetcher 5/5; installer support-tier 3/3 (8/8 total).
 - UE 5.7 and UE 5.8: clean Example57-host UBT, RAG reliability/retrieval,
   shared eval-path, outcome-append integrity, and path-containment coverage
-  11/11, Gate D 1/1,
+  17/17, Gate D 1/1,
   EngineCompat 2/2, and
   ProjectVersionMigration support contract 1/1.
 - Live UE 5.8 MCP `unreal.knowledge_eval_run`: 8/8 cases and 3/3 rank
@@ -119,12 +125,12 @@ URLs into card text.
 - UE 5.7 and UE 5.8 safety baselines: VetMadeTool 11/11, VettedToolset 5/5,
   CallTool 9/9, and TaskAtlas 38/38 on each engine.
 
-R1 expands the RAG automation suite from 11 to 17 tests with interruption
-recovery, stale/corrupt append refusal, isolated-empty gating, known-engine
-numeric filtering, deterministic CJK/Latin retrieval, and original-token rank
-coverage. Those six new C++ tests require the next UE 5.7/5.8 test pass; the
-11/11 figures above remain the last executed baseline rather than a claim that
-the new tests have already run.
+The 17-test RAG baseline was executed on both primary engines after clean
+Example57-host builds and includes interruption recovery, stale/corrupt append
+refusal, isolated-empty gating, known-engine numeric filtering, deterministic
+CJK/Latin retrieval, and original-token rank coverage. The retrieval fixtures
+use non-synonym CJK/embedded-Latin terms and a score tie that only the original
+token weight can break, so removing either production behavior fails the suite.
 
 ## Deferred / fast-follow after R1
 

@@ -76,8 +76,8 @@ bool FUnrealMcpCallToolPolicyMatrixTest::RunTest(const FString& Parameters)
 
 	TestEqual(TEXT("visible tool count"), VisibleCount, 178);
 	TestEqual(TEXT("force dry run count"), ForceDryRunCount, 31);
-	TestEqual(TEXT("deny count"), DenyCount, 82);
-	TestEqual(TEXT("allow count"), AllowCount, 65);
+	TestEqual(TEXT("deny count"), DenyCount, 83);
+	TestEqual(TEXT("allow count"), AllowCount, 64);
 	TestEqual(TEXT("allow vetted real count"), AllowVettedRealCount, 0);
 
 	auto ExpectDecision = [this](

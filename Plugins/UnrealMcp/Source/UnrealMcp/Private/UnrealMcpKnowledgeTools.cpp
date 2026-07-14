@@ -79,6 +79,8 @@ namespace UnrealMcp
 				FString IndexFilePath;
 				int64 FileSize = -1;
 				FDateTime FileTimestamp;
+				int64 ManifestFileSize = -1;
+				FDateTime ManifestFileTimestamp;
 				TArray<FKnowledgeCard> Cards;
 				bool bValid = false;
 			};
@@ -2560,33 +2562,25 @@ namespace UnrealMcp
 					SetStatus(TEXT("corrupt"));
 					return false;
 				}
-				if (!RecoverKnowledgeIndexPairIfNeeded(IndexDir, OutFailureReason))
-				{
-					SetStatus(TEXT("corrupt"));
-					return false;
-				}
 				const FString CardsPath = FPaths::Combine(IndexDir, TEXT("cards.jsonl"));
-				const int64 FileSize = IFileManager::Get().FileSize(*CardsPath);
-				if (FileSize < 0)
-				{
-					SetStatus(TEXT("missing"));
-					OutFailureReason = FString::Printf(TEXT("Knowledge index not found at '%s'. Run unreal.knowledge_index_refresh first."), *CardsPath);
-					return false;
-				}
-				if (FileSize == 0)
-				{
-					SetStatus(TEXT("empty"));
-					OutFailureReason = FString::Printf(TEXT("Knowledge index '%s' contains no cards."), *CardsPath);
-					return false;
-				}
-				const FDateTime FileTimestamp = IFileManager::Get().GetTimeStamp(*CardsPath);
+				const FString ManifestPath = FPaths::Combine(IndexDir, TEXT("index.json"));
+				int64 FileSize = IFileManager::Get().FileSize(*CardsPath);
+				FDateTime FileTimestamp = FileSize >= 0
+					? IFileManager::Get().GetTimeStamp(*CardsPath)
+					: FDateTime::MinValue();
+				int64 ManifestFileSize = IFileManager::Get().FileSize(*ManifestPath);
+				FDateTime ManifestFileTimestamp = ManifestFileSize >= 0
+					? IFileManager::Get().GetTimeStamp(*ManifestPath)
+					: FDateTime::MinValue();
 
 				{
 					FScopeLock Lock(&GKnowledgeCardCacheMutex);
 					if (GKnowledgeCardCache.bValid
 						&& GKnowledgeCardCache.IndexFilePath.Equals(CardsPath, ESearchCase::CaseSensitive)
 						&& GKnowledgeCardCache.FileSize == FileSize
-						&& GKnowledgeCardCache.FileTimestamp == FileTimestamp)
+						&& GKnowledgeCardCache.FileTimestamp == FileTimestamp
+						&& GKnowledgeCardCache.ManifestFileSize == ManifestFileSize
+						&& GKnowledgeCardCache.ManifestFileTimestamp == ManifestFileTimestamp)
 					{
 						OutCards = GKnowledgeCardCache.Cards;
 						if (OutCards.IsEmpty())
@@ -2605,6 +2599,30 @@ namespace UnrealMcp
 						return true;
 					}
 				}
+
+				if (!RecoverKnowledgeIndexPairIfNeeded(IndexDir, OutFailureReason))
+				{
+					SetStatus(TEXT("corrupt"));
+					return false;
+				}
+				FileSize = IFileManager::Get().FileSize(*CardsPath);
+				if (FileSize < 0)
+				{
+					SetStatus(TEXT("missing"));
+					OutFailureReason = FString::Printf(TEXT("Knowledge index not found at '%s'. Run unreal.knowledge_index_refresh first."), *CardsPath);
+					return false;
+				}
+				if (FileSize == 0)
+				{
+					SetStatus(TEXT("empty"));
+					OutFailureReason = FString::Printf(TEXT("Knowledge index '%s' contains no cards."), *CardsPath);
+					return false;
+				}
+				FileTimestamp = IFileManager::Get().GetTimeStamp(*CardsPath);
+				ManifestFileSize = IFileManager::Get().FileSize(*ManifestPath);
+				ManifestFileTimestamp = ManifestFileSize >= 0
+					? IFileManager::Get().GetTimeStamp(*ManifestPath)
+					: FDateTime::MinValue();
 
 				TArray<FString> Lines;
 				if (!FFileHelper::LoadFileToStringArray(Lines, *CardsPath))
@@ -2663,6 +2681,8 @@ namespace UnrealMcp
 					GKnowledgeCardCache.IndexFilePath = CardsPath;
 					GKnowledgeCardCache.FileSize = FileSize;
 					GKnowledgeCardCache.FileTimestamp = FileTimestamp;
+					GKnowledgeCardCache.ManifestFileSize = ManifestFileSize;
+					GKnowledgeCardCache.ManifestFileTimestamp = ManifestFileTimestamp;
 					GKnowledgeCardCache.Cards = LoadedCards;
 					GKnowledgeCardCache.bValid = true;
 				}
@@ -3663,6 +3683,10 @@ namespace UnrealMcp
 		const FString CardsPath = FPaths::Combine(IndexRoot, TEXT("cards.jsonl"));
 		const FString ManifestPath = FPaths::Combine(IndexRoot, TEXT("index.json"));
 		if (!ValidateKnowledgeIndexLeafPaths(IndexRoot, OutFailureReason))
+		{
+			return false;
+		}
+		if (!RecoverKnowledgeIndexPairIfNeeded(IndexRoot, OutFailureReason))
 		{
 			return false;
 		}

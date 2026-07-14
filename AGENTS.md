@@ -200,9 +200,9 @@ CLI <-> Chat Panel sync tools (chat_inject_user_input, chat_history_tail,
 chat_tool_log_tail) and hardens Task Atlas eligibility against external-client
 registry-miss noise.
 
-Current project status: v0.35.0 is in development (2026-07-10). UE 5.7 and
+Current project status: v0.35.0 is in development (2026-07-14). UE 5.7 and
 UE 5.8 are the primary support targets; both clean-build the current source,
-and both pass the new RAG 11/11, Gate D 1/1, EngineCompat 2/2, and project
+and both pass the new RAG 17/17, Gate D 1/1, EngineCompat 2/2, and project
 version migration 1/1 suites. Both primary engines also pass the v0.34 safety
 baselines: VetMadeTool 11/11, VettedToolset 5/5, CallTool 9/9, and TaskAtlas
 38/38. The RAG
@@ -216,7 +216,10 @@ RAG roots, recursive scans, manifest `textPath` reads, fixed index leaves,
 eval files, and source-fingerprint metadata probes without following symlinks
 or reparse points. R1 adds interruption recovery, deterministic CJK/Latin
 tokenization, known-engine-only numeric filtering, isolated `allowEmptyIndex`,
-Chat refresh backoff, skipped-HTML cleanup, and Windows CI hardening. The root host now targets 5.7;
+Chat refresh backoff, skipped-HTML cleanup, and Windows CI hardening. Unchanged
+warm index reads use cards/manifest size and timestamp metadata to bypass pair
+recovery, hashing, and JSONL parsing; cold or changed pairs still run full
+recovery and verification. The root host now targets 5.7;
 `project_version_migration` accepts primary 5.7/5.8 and
 maintenance 5.6. Registry count stays 190 and validation is 190/190. Detailed
 development notes are in `Docs/Development-0.35.md`.

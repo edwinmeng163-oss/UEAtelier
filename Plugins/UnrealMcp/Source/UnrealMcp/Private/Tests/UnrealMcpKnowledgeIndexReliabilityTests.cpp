@@ -612,7 +612,7 @@ bool FUnrealMcpKnowledgeSavedPathContainmentTest::RunTest(const FString& Paramet
 	RefreshArgs.SetBoolField(TEXT("dryRun"), false);
 	const FUnrealMcpExecutionResult LinkedManifestRefresh = UnrealMcp::KnowledgeIndexRefresh(RefreshArgs);
 	TestTrue(TEXT("Refresh rejects a symlinked index.json leaf."), LinkedManifestRefresh.bIsError);
-	TestTrue(TEXT("Symlinked index leaf rejection identifies the bounded leaf rule."), LinkedManifestRefresh.Text.Contains(TEXT("fixed leaf files")));
+	TestTrue(TEXT("Symlinked index leaf rejection identifies the bounded leaf rule."), LinkedManifestRefresh.Text.Contains(TEXT("fixed current/backup leaf files")));
 	DeleteKnowledgeSymlink(ManifestSymlinkPath);
 #else
 	AddInfo(TEXT("Symlink leaf checks are skipped on this platform; lexical and reparse-point checks remain active."));

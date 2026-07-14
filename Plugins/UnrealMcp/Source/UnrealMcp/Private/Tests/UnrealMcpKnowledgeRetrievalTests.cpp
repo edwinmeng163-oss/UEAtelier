@@ -296,19 +296,19 @@ bool FUnrealMcpKnowledgeCjkLatinTokenizationTest::RunTest(const FString& Paramet
 
 	TestTrue(TEXT("CJK/Latin source is written."), WriteSource(
 		TestRoot,
-		TEXT("cjk_ui.md"),
-		TEXT("# 控件说明\n\n在UI控件中调整用户界面，然后添加确认按钮。\n")));
+		TEXT("cjk_niagara.md"),
+		TEXT("# 粒子说明\n\n霜火之间流动星尘，并用niagara系统控制效果。\n")));
 	TestTrue(TEXT("CJK decoy source is written."), WriteSource(
 		TestRoot,
 		TEXT("build.md"),
 		TEXT("# 构建说明\n\n编译构建流水线。\n")));
 	TestFalse(TEXT("CJK fixture refresh succeeds."), Refresh(TestRoot).bIsError);
 
-	const TArray<FString> BigramPaths = ResultSourcePaths(Search(TestRoot, TEXT("界面按钮")));
-	TestTrue(TEXT("Overlapping CJK bigrams retrieve the intended card."), ContainsFilename(BigramPaths, TEXT("cjk_ui.md")));
-	const TArray<FString> UiPaths = ResultSourcePaths(Search(TestRoot, TEXT("ui")));
-	TestTrue(TEXT("Latin UI embedded in CJK prose remains retrievable."), ContainsFilename(UiPaths, TEXT("cjk_ui.md")));
-	TestFalse(TEXT("UI does not retrieve the build decoy."), ContainsFilename(UiPaths, TEXT("build.md")));
+	const TArray<FString> BigramPaths = ResultSourcePaths(Search(TestRoot, TEXT("霜火星尘")));
+	TestTrue(TEXT("Non-synonym overlapping CJK bigrams retrieve the intended card."), ContainsFilename(BigramPaths, TEXT("cjk_niagara.md")));
+	const TArray<FString> NiagaraPaths = ResultSourcePaths(Search(TestRoot, TEXT("niagara")));
+	TestTrue(TEXT("Non-synonym Latin token embedded directly in CJK prose remains retrievable."), ContainsFilename(NiagaraPaths, TEXT("cjk_niagara.md")));
+	TestFalse(TEXT("Niagara does not retrieve the build decoy."), ContainsFilename(NiagaraPaths, TEXT("build.md")));
 	return true;
 }
 
@@ -326,11 +326,11 @@ bool FUnrealMcpKnowledgeOriginalTokenRankingTest::RunTest(const FString& Paramet
 	ON_SCOPE_EXIT { IFileManager::Get().DeleteDirectory(*TestRoot, false, true); };
 
 	TestTrue(TEXT("Exact widget source is written."), WriteSource(
-		TestRoot, TEXT("widget.md"), TEXT("# Widget authoring\n\nWidget layout reference.\n")));
+		TestRoot, TEXT("widget.md"), TEXT("# Zulu widget reference\n\nrankanchor\n")));
 	TestTrue(TEXT("Synonym-only UI source is written."), WriteSource(
-		TestRoot, TEXT("ui.md"), TEXT("# UI authoring\n\nUI layout reference.\n")));
+		TestRoot, TEXT("ui.md"), TEXT("# Alpha ui reference\n\nrankanchor\n")));
 	TestFalse(TEXT("Original-token fixture refresh succeeds."), Refresh(TestRoot).bIsError);
-	const TArray<FString> Paths = ResultSourcePaths(Search(TestRoot, TEXT("widget"), 2));
+	const TArray<FString> Paths = ResultSourcePaths(Search(TestRoot, TEXT("widget rankanchor"), 2));
 	TestTrue(TEXT("Original-token query returns results."), !Paths.IsEmpty());
 	if (!Paths.IsEmpty())
 	{
