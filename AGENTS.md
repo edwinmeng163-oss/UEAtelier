@@ -200,7 +200,10 @@ CLI <-> Chat Panel sync tools (chat_inject_user_input, chat_history_tail,
 chat_tool_log_tail) and hardens Task Atlas eligibility against external-client
 registry-miss noise.
 
-Current project status: v0.35.0 is in development (2026-07-14). UE 5.7 and
+Current project status: v0.35.0 is the current public release (2026-07-14),
+shipped as Batch 1 of the dual-variant v0.35 plan; variant structure and
+optional official-MCP integration remain a later batch. Trilingual notes at
+`Docs/Release-2026-07b.md`. UE 5.7 and
 UE 5.8 are the primary support targets; both clean-build the current source,
 and both pass the new RAG 17/17, Gate D 1/1, EngineCompat 2/2, and project
 version migration 1/1 suites. Both primary engines also pass the v0.34 safety

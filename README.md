@@ -21,9 +21,9 @@ This repository is an Unreal Engine 5.7 / 5.8 editor-tooling workbench focused o
 
 Its main deliverable is the **Unreal MCP** editor plugin under `Plugins/UnrealMcp`. The plugin exposes Unreal Editor operations through a localhost MCP endpoint and an in-editor chat panel. The repository root includes `UEvolve.uproject` (UE 5.7) as the default local development host. `Examples/UEvolveExample57/UEvolveExample57.uproject` (UE 5.7.4) is the primary sample-content host and is reused for UE 5.8 validation; `Examples/UEvolveExample/UEvolveExample.uproject` remains the UE 5.6.1 maintenance canary.
 
-> 📘 **New here?** Start with [`Docs/Release-2026-07.md`](Docs/Release-2026-07.md) — trilingual v0.34.0 notes plus the setup pointer chain for macOS, Linux, and Windows, including the multi-provider AI configuration (OpenAI / Kimi / GLM / DeepSeek / Qwen / Ollama / Anthropic Claude / Codex) and the Codex Desktop bridge.
+> 📘 **New here?** Start with [`Docs/Release-2026-07b.md`](Docs/Release-2026-07b.md) — trilingual v0.35.0 notes plus the setup pointer chain for macOS, Linux, and Windows, including the multi-provider AI configuration (OpenAI / Kimi / GLM / DeepSeek / Qwen / Ollama / Anthropic Claude / Codex) and the Codex Desktop bridge.
 
-> 🚧 **v0.35.0 is in development.** UE 5.7 and 5.8 are the primary targets; UE 5.6 is maintenance-only. The latest public release remains v0.34.0.
+> 📦 **v0.35.0 released.** UE 5.7 and 5.8 are the primary supported engines; UE 5.6 is a maintenance compile canary. The last 5.6-packaged release line is v0.34.0.
 
 ## English Overview
 
@@ -34,9 +34,9 @@ UEAtelier productizes the act of adding new MCP capabilities under safety rails:
 audit, dry run, backup manifest, UBT compile, fixture suite, rollback, project
 memory, and supervisor recovery.
 
-Latest release: **[v0.34.0 — Make-Tool-Set vetting foundation + bridge MCP reachability fix](https://github.com/edwinmeng163-oss/UEAtelier/releases/tag/v0.34.0)** (public, source-only projectroot zips, ~1 MiB each). Release notes: [`Docs/Release-2026-07.md`](Docs/Release-2026-07.md). Mac and Windows zips are both attached; the same source compiles cleanly on UE 5.6 and UE 5.7. Extract the projectroot zip next to your `<YourProject>.uproject` (NOT under `Plugins/`); UBT compiles on first editor launch or explicit editor-target build.
+Latest release: **[v0.35.0 — UE 5.7/5.8 primary targets + knowledge-index reliability overhaul](https://github.com/edwinmeng163-oss/UEAtelier/releases/tag/v0.35.0)** (public, source-only projectroot zips, ~1 MiB each). Release notes: [`Docs/Release-2026-07b.md`](Docs/Release-2026-07b.md). Mac and Windows zips are both attached; the same source compiles cleanly on UE 5.7 and UE 5.8 (UE 5.6 remains a maintenance compile canary). Extract the projectroot zip next to your `<YourProject>.uproject` (NOT under `Plugins/`); UBT compiles on first editor launch or explicit editor-target build.
 
-Current development line: **v0.35.0** prioritizes UE 5.7 and UE 5.8. The root host targets 5.7, `Examples/UEvolveExample57` is reused for 5.8 validation, and the latest public release remains v0.34.0.
+Current development line: **v0.35 Batch 2** — the dual-variant structure and optional Epic official-MCP integration (see `Docs/Development-0.35.md`). The root host targets 5.7 and `Examples/UEvolveExample57` is reused for 5.8 validation.
 
 Current core capabilities:
 
@@ -55,7 +55,7 @@ Current core capabilities:
 - Local RAG with KnowledgeIndex v2 staged, verified, recoverable last-known-good writes, machine-readable `missing|empty|stale|ready|corrupt` status, ActivityLog indexing off by default, version-aware/diversity-aware ranking, rank-aware evals, separate UE 5.7 / 5.8 official-source manifests, and a metadata-checked warm cache that skips full recovery/hash/JSONL parsing until either pair file changes.
 - Multi-engine and cross-platform discipline with UE 5.7 and UE 5.8 as primary targets and UE 5.6 as a maintenance compile canary on macOS and Windows.
 
-For a quick start, read `Docs/Release-2026-07.md`, then `AGENTS.md`, then the
+For a quick start, read `Docs/Release-2026-07b.md`, then `AGENTS.md`, then the
 Deployment section later in this README.
 
 Demo gallery: see [Demo/README.md](Demo/README.md).
@@ -77,9 +77,9 @@ UEAtelier 试图把“新增 MCP 能力”本身产品化，并用安全护栏�
 audit、dry run、备份 manifest、UBT 编译、fixture 测试套件、rollback、
 project memory 和 supervisor 恢复链路。
 
-最新 release：**[v0.34.0 — Make-Tool-Set vetting foundation + bridge MCP reachability fix](https://github.com/edwinmeng163-oss/UEAtelier/releases/tag/v0.34.0)**（公开、source-only projectroot zip、各约 1 MiB）。Release notes：[`Docs/Release-2026-07.md`](Docs/Release-2026-07.md)。Mac 和 Windows zip 都已上传；同一份 source 在 UE 5.6 和 UE 5.7 上都能干净编译。把 projectroot zip 解压到 `<YourProject>.uproject` 同级目录（不要解到 `Plugins/` 下），UBT 会在首次启动编辑器或显式构建 editor target 时编译插件。
+最新 release：**[v0.35.0 — UE 5.7/5.8 主目标 + 知识索引可靠性全面加固](https://github.com/edwinmeng163-oss/UEAtelier/releases/tag/v0.35.0)**（公开、source-only projectroot zip、各约 1 MiB）。Release notes：[`Docs/Release-2026-07b.md`](Docs/Release-2026-07b.md)。Mac 和 Windows zip 都已上传；同一份 source 在 UE 5.7 和 UE 5.8 上都能干净编译（UE 5.6 仅保留维护性编译 canary）。把 projectroot zip 解压到 `<YourProject>.uproject` 同级目录（不要解到 `Plugins/` 下），UBT 会在首次启动编辑器或显式构建 editor target 时编译插件。
 
-当前开发线：**v0.35.0（开发中）** 优先支持 UE 5.7 和 UE 5.8。根项目主机指向 5.7，`Examples/UEvolveExample57` 复用于 5.8 验证，最新公开 release 仍为 v0.34.0。
+当前开发线：**v0.35 Batch 2** — dual-variant 结构与可选的 Epic 官方 MCP 集成（见 `Docs/Development-0.35.md`）。根项目主机指向 5.7，`Examples/UEvolveExample57` 复用于 5.8 验证。
 
 当前核心能力：
 
@@ -98,7 +98,7 @@ project memory 和 supervisor 恢复链路。
 - 本地 RAG：KnowledgeIndex v2 提供分阶段、校验并可恢复的 last-known-good 写入、`missing|empty|stale|ready|corrupt` 机器可读状态；ActivityLog 默认不索引，并支持版本/来源多样性排名、rank-aware eval、分离的 UE 5.7 / 5.8 官方源 manifest，以及按 pair 元数据校验的暖缓存；两份索引文件未变化时跳过完整恢复、hash 与 JSONL 解析，发生变化后仍执行完整校验。
 - 多引擎和跨平台兼容纪律以 UE 5.7 和 UE 5.8 为主要目标，UE 5.6 仅作为 macOS 与 Windows 的维护性编译 canary。
 
-快速开始请先阅读 `Docs/Release-2026-07.md`，再读 `AGENTS.md`，然后参考本
+快速开始请先阅读 `Docs/Release-2026-07b.md`，再读 `AGENTS.md`，然后参考本
 README 后面的 Deployment 部分。
 
 Demo 库：见 [Demo/README.md](Demo/README.md)。
@@ -120,9 +120,9 @@ UEAtelier は新しい MCP capabilities を追加する行為そのものを製�
 audit、dry run、backup manifest、UBT compile、fixture suite、rollback、
 project memory、supervisor recovery という安全レールの下で扱います。
 
-最新リリース: **[v0.34.0 — Make-Tool-Set vetting foundation + bridge MCP reachability fix](https://github.com/edwinmeng163-oss/UEAtelier/releases/tag/v0.34.0)**（公開、source-only projectroot zip、各約 1 MiB）。Release notes: [`Docs/Release-2026-07.md`](Docs/Release-2026-07.md)。Mac と Windows の zip が両方添付されており、同一ソースで UE 5.6 と UE 5.7 の両方が clean にコンパイルできます。projectroot zip を `<YourProject>.uproject` と同じ階層に展開してください（`Plugins/` 配下には展開しません）。UBT が初回エディタ起動時、または editor target の明示的なビルド時に plugin をコンパイルします。
+最新リリース: **[v0.35.0 — UE 5.7/5.8 プライマリターゲット + ナレッジインデックス信頼性強化](https://github.com/edwinmeng163-oss/UEAtelier/releases/tag/v0.35.0)**（公開、source-only projectroot zip、各約 1 MiB）。Release notes: [`Docs/Release-2026-07b.md`](Docs/Release-2026-07b.md)。Mac と Windows の zip が両方添付されており、同一ソースで UE 5.7 と UE 5.8 の両方が clean にコンパイルできます（UE 5.6 はメンテナンス用コンパイル canary として維持）。projectroot zip を `<YourProject>.uproject` と同じ階層に展開してください（`Plugins/` 配下には展開しません）。UBT が初回エディタ起動時、または editor target の明示的なビルド時に plugin をコンパイルします。
 
-現在の開発ライン: **v0.35.0（開発中）** は UE 5.7 と UE 5.8 を優先します。root host は 5.7 を使い、`Examples/UEvolveExample57` を 5.8 validation にも再利用します。最新の公開リリースは引き続き v0.34.0 です。
+現在の開発ライン: **v0.35 Batch 2** — dual-variant 構造と Epic 公式 MCP 統合(オプション)です(`Docs/Development-0.35.md` を参照)。root host は 5.7 を使い、`Examples/UEvolveExample57` を 5.8 validation にも再利用します。
 
 現在の中核機能:
 
@@ -141,7 +141,7 @@ project memory、supervisor recovery という安全レールの下で扱いま�
 - local RAG は KnowledgeIndex v2 による staged / verified / recoverable な last-known-good write、`missing|empty|stale|ready|corrupt` の machine-readable status を備えます。ActivityLog indexing は既定で off とし、version/source diversity ranking、rank-aware eval、分離された UE 5.7 / 5.8 official-source manifest、および pair metadata を検査する warm cache に対応します。両 index file が未変更なら full recovery / hash / JSONL parse を省略し、変更時は full verification を実行します。
 - multi-engine / cross-platform 互換性は UE 5.7 と UE 5.8 を主要対象とし、UE 5.6 は macOS / Windows の maintenance compile canary としてのみ扱います。
 
-quick start には `Docs/Release-2026-07.md`、続いて `AGENTS.md`、さらにこの
+quick start には `Docs/Release-2026-07b.md`、続いて `AGENTS.md`、さらにこの
 README 後半の Deployment section を参照してください。
 
 デモギャラリー：[Demo/README.md](Demo/README.md) を参照。
@@ -154,7 +154,7 @@ The repository currently contains:
 
 - `UEvolve.uproject`, the root Unreal Engine 5.7 local development host for the workbench.
 - `open_uevolve.command`, a macOS convenience launcher that opens the root host project.
-- `Plugins/UnrealMcp`, an editor plugin for local MCP and in-editor AI/chat workflows (`VersionName: 0.35.0`, in development; latest public release v0.34.0).
+- `Plugins/UnrealMcp`, an editor plugin for local MCP and in-editor AI/chat workflows (`VersionName: 0.35.0`, the current public release).
 - `Examples/UEvolveExample57` (UE 5.7.4), the primary sample-content host reused for UE 5.8 validation, plus `Examples/UEvolveExample` (UE 5.6.1) as the maintenance compile canary.
 - Git LFS setup for Unreal binary assets.
 - Project-level README and ignore rules suitable for public GitHub hosting.

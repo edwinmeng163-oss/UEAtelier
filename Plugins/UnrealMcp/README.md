@@ -2,11 +2,10 @@
 
 This plugin runs a local Model Context Protocol server inside Unreal Editor and adds an in-editor command and AI chat window.
 
-Current development plugin `VersionName: 0.35.0`. UE 5.7 and UE 5.8 are the
+Current public release `VersionName: 0.35.0`. UE 5.7 and UE 5.8 are the
 primary source-build targets; UE 5.6 remains a maintenance compile canary. The
 root `UEvolve.uproject` host targets 5.7, and `Examples/UEvolveExample57` is
-reused for 5.8 validation instead of duplicating the sample-content host. The
-latest public release remains v0.34.0.
+reused for 5.8 validation instead of duplicating the sample-content host.
 
 ## What It Exposes
 

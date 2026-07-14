@@ -127,7 +127,7 @@ This document does not announce a v0.35 public release. The latest public releas
 
 ### Help
 
-For the development contract, start with `Docs/Development-0.35.md`. For the latest public-release record, read `Docs/Release-2026-07.md`, then `Plugins/UnrealMcp/README.md`. Historical release notes remain under `Docs/Release-*.md`. Report bugs at `https://github.com/edwinmeng163-oss/UEAtelier/issues`.
+For the development contract, start with `Docs/Development-0.35.md`. For the latest public-release record, read `Docs/Release-2026-07b.md`, then `Plugins/UnrealMcp/README.md`. Historical release notes remain under `Docs/Release-*.md`. Report bugs at `https://github.com/edwinmeng163-oss/UEAtelier/issues`.
 
 ### Verify The Package
 
@@ -236,7 +236,7 @@ Windows PowerShell：
 
 ### 获取帮助
 
-开发契约请先阅读 `Docs/Development-0.35.md`。最新公开发布记录见 `Docs/Release-2026-07.md`，然后阅读 `Plugins/UnrealMcp/README.md`；历史发布记录仍保存在 `Docs/Release-*.md`。Bug 请在 `https://github.com/edwinmeng163-oss/UEAtelier/issues` 报告。
+开发契约请先阅读 `Docs/Development-0.35.md`。最新公开发布记录见 `Docs/Release-2026-07b.md`，然后阅读 `Plugins/UnrealMcp/README.md`；历史发布记录仍保存在 `Docs/Release-*.md`。Bug 请在 `https://github.com/edwinmeng163-oss/UEAtelier/issues` 报告。
 
 ### 验证包
 
@@ -345,7 +345,7 @@ Windows PowerShell:
 
 ### ヘルプ
 
-開発契約は `Docs/Development-0.35.md` から確認してください。最新の公開リリース記録は `Docs/Release-2026-07.md`、続いて `Plugins/UnrealMcp/README.md` を参照してください。過去のリリース記録は `Docs/Release-*.md` に残っています。バグは `https://github.com/edwinmeng163-oss/UEAtelier/issues` で報告してください。
+開発契約は `Docs/Development-0.35.md` から確認してください。最新の公開リリース記録は `Docs/Release-2026-07b.md`、続いて `Plugins/UnrealMcp/README.md` を参照してください。過去のリリース記録は `Docs/Release-*.md` に残っています。バグは `https://github.com/edwinmeng163-oss/UEAtelier/issues` で報告してください。
 
 ### パッケージの検証
 
