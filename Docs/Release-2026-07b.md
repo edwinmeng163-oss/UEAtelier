@@ -45,7 +45,7 @@ Drop-in upgrade from v0.34.0 for UE 5.7 and UE 5.8 hosts. UE 5.6 still compiles 
 
 ```text
 UnrealMcp-v0.35.0-mac-ue57-ue58-projectroot.zip
-SHA-256: PENDING-MAC-SHA256
+SHA-256: da235d1ad42db13fec2b9b312e961ba79cb63282f4c0ea03bb62be281b07cb53
 SHA-256 sidecar: UnrealMcp-v0.35.0-mac-ue57-ue58-projectroot.zip.sha256
 
 UnrealMcp-v0.35.0-win-ue57-ue58-projectroot.zip
@@ -94,7 +94,7 @@ v0.35.0 将 Unreal Engine 5.7 和 5.8 设为主要源码目标（UE 5.6 仅保�
 
 ```text
 UnrealMcp-v0.35.0-mac-ue57-ue58-projectroot.zip
-SHA-256: PENDING-MAC-SHA256
+SHA-256: da235d1ad42db13fec2b9b312e961ba79cb63282f4c0ea03bb62be281b07cb53
 SHA-256 sidecar: UnrealMcp-v0.35.0-mac-ue57-ue58-projectroot.zip.sha256
 
 UnrealMcp-v0.35.0-win-ue57-ue58-projectroot.zip
@@ -143,7 +143,7 @@ UE 5.7 / UE 5.8 ホストでは v0.34.0 からドロップインでアップグ�
 
 ```text
 UnrealMcp-v0.35.0-mac-ue57-ue58-projectroot.zip
-SHA-256: PENDING-MAC-SHA256
+SHA-256: da235d1ad42db13fec2b9b312e961ba79cb63282f4c0ea03bb62be281b07cb53
 SHA-256 sidecar: UnrealMcp-v0.35.0-mac-ue57-ue58-projectroot.zip.sha256
 
 UnrealMcp-v0.35.0-win-ue57-ue58-projectroot.zip
