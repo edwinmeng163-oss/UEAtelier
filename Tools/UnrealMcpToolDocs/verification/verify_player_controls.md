@@ -4,7 +4,7 @@
 **Title**: Verify Player Controls
 **Risk level**: medium
 
-Verifies that player controls are set up in PIE by checking possession, the pawn class, camera/spring-arm components, and existing jump, movement, and look bindings. This tool does not inject input and does not measure movement deltas.
+Verifies PIE possession, pawn class, camera/spring arm components, and Jump/move/look binding existence without injecting input or checking movement deltas.
 
 ## Capabilities
 
@@ -26,16 +26,16 @@ Verifies that player controls are set up in PIE by checking possession, the pawn
   "properties": {
     "expectedPawnClass": {
       "type": "string",
-      "description": "Optional expected pawn class path, for example /Game/BP_Player.BP_Player_C."
+      "description": "Optional expected pawn class path, for example /Game/Player/BP_Player.BP_Player_C or /Script/Engine.Character."
     },
     "startIfNeeded": {
       "type": "boolean",
-      "description": "Start PIE if runtime verification is needed and PIE is not already active.",
+      "description": "Start PIE when no PIE session is active; the tool waits privately for BeginPIE before inspecting.",
       "default": false
     },
     "stopAfter": {
       "type": "boolean",
-      "description": "Stop PIE after verification. When omitted, defaults to true only when this call started PIE.",
+      "description": "Stop PIE after verification. If omitted at runtime, auto-started PIE is stopped and pre-existing PIE is left running.",
       "default": false
     }
   },
@@ -50,13 +50,13 @@ _Provenance: fixture-derived_
 
 ```json
 {
-  "startIfNeeded": true,
-  "stopAfter": true
+  "timeoutSeconds": 10,
+  "aliveWindowSeconds": 30,
+  "startIfNeeded": false
 }
 ```
 
 ## Provenance
-
-- Source docs: Docs/Verification.md
-- Reason: v0.27.1 Wave 2 core gameplay setup primitive for possession and binding existence checks.
-- Notes: Uses a private BeginPIE wait helper when `startIfNeeded=true`; intentionally performs no input injection or movement-delta validation.
+- Source docs: Tools/UnrealMcpToolDocs/verification/verify_player_controls.md
+- Reason: v0.27.1 core runtime setup verifier that waits privately for BeginPIE and performs existence-only control checks.
+- Notes: Existence and possession verifier only: no input injection and no movement-delta assertion. A private BeginPIE wait helper is used when startIfNeeded=true.

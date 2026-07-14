@@ -23,22 +23,25 @@ Inspect user registry state, generated source metadata, handler hashes, lifecycl
 ```json
 {
   "type": "object",
-  "additionalProperties": false,
   "properties": {
     "includeToolJson": {
       "type": "boolean",
+      "description": "Include sanitized tool.json snippets. Do not include private captured args.",
       "default": false
     },
     "includePythonSha": {
       "type": "boolean",
+      "description": "Include python handler SHA-256 where available.",
       "default": true
     },
     "toolName": {
       "type": "string",
+      "description": "Optional exact user tool name filter. Empty means all.",
       "default": ""
     }
   },
-  "required": []
+  "required": [],
+  "additionalProperties": false
 }
 ```
 
@@ -51,7 +54,6 @@ _Provenance: schema-minimal_
 ```
 
 ## Provenance
-
 - Source docs: Docs/SelfExtensionPipeline.md
 - Reason: v0.31 visible read-only user registry introspection wrapper over TaskAtlasService::IntrospectUserRegistry.
-- Notes: AssistantRun approval is not required. This tool sanitizes generated metadata and never returns private captured args or Python source.
+- Notes: AssistantRun approval: not_required. This tool is read-only and sanitizes generated metadata; it never returns private captured args or Python source.

@@ -16,21 +16,26 @@ Current plugin metadata:
 ```text
 Plugins/UnrealMcp/UnrealMcp.uplugin
 FriendlyName: UEAtelier
-VersionName: 0.34.0
-EngineVersion: 5.6.0
+VersionName: 0.35.0
+EngineVersion: intentionally omitted for cross-version source builds
 Type: Editor plugin
 Required plugin: PythonScriptPlugin
 ```
 
-The plugin supports Unreal Engine 5.6 and 5.7 from the same source tree.
+The v0.35 source line prioritizes Unreal Engine 5.7 and 5.8. UE 5.6 remains a
+maintenance compile canary during the transition, not a primary release gate.
 `UEvolve.uproject` is the local development host and defaults to
-`EngineAssociation` `5.6`. Optional sample-content hosts are
-`Examples/UEvolveExample` (UE 5.6.1) and `Examples/UEvolveExample57`
-(UE 5.7.4).
+`EngineAssociation` `5.7`. `Examples/UEvolveExample57` (UE 5.7.4) is the
+primary sample-content host and is also built/tested with UE 5.8; the full
+`Examples/UEvolveExample` host remains the UE 5.6 maintenance canary. Do not
+add a duplicate multi-gigabyte UE 5.8 content host.
 
 Multi-engine discipline:
 
 - All `#if ENGINE_*_VERSION` goes in `UnrealMcpEngineCompat.h`.
+- Before switching the shared `Examples/UEvolveExample57` host between UE 5.7
+  and UE 5.8, delete both the plugin and host `Binaries/` and `Intermediate/`
+  directories. Partial platform/build-subdirectory cleanup is insufficient.
 - Run `Tools/install_git_hooks.sh` once after clone.
 - `EAiProviderKind` values are append-only; do not renumber.
 
@@ -158,7 +163,11 @@ drafts unless explicitly asked.
   vetted-context smoke, persisted marker, and fail-closed audit. Depth=1 and
   `user.*` targets remain forbidden.
 - RAG/recommendation, memory, skills, Task Atlas, and verification:
-  knowledge index/search/eval, tool/workflow recommend, project memory CRUD,
+  KnowledgeIndex v2 with staged/verified replacement and recoverable
+  last-known-good backup pairs,
+  `missing|empty|stale|ready|corrupt` status, source/engine counts and hashes;
+  boundary-aware/version-aware lexical search, source-kind/engine diversity,
+  rank-aware evals, tool/workflow recommend, project memory CRUD,
   skill activity/drafts/promote, task extract/list/describe/rate/pin/promote,
   schema v2 ordered Task Atlas stepRefs with preview composite generation from
   private captured args, MCP wrappers for making/listing/deleting/smoking
@@ -191,7 +200,31 @@ CLI <-> Chat Panel sync tools (chat_inject_user_input, chat_history_tail,
 chat_tool_log_tail) and hardens Task Atlas eligibility against external-client
 registry-miss noise.
 
-Current project status: v0.34.0 (2026-07-02) ships the Make-Tool-Set
+Current project status: v0.35.0 is in development (2026-07-14). UE 5.7 and
+UE 5.8 are the primary support targets; both clean-build the current source,
+and both pass the new RAG 17/17, Gate D 1/1, EngineCompat 2/2, and project
+version migration 1/1 suites. Both primary engines also pass the v0.34 safety
+baselines: VetMadeTool 11/11, VettedToolset 5/5, CallTool 9/9, and TaskAtlas
+38/38. The RAG
+P0/P1 batch isolates Gate D from the production index, prevents zero-card
+refresh from replacing last-known-good state, writes/validates Index v2
+hash/freshness metadata, makes ActivityLog indexing opt-in, separates promoted
+markdown from official-doc toggles, preserves UE 5.7/5.8 metadata/headings,
+fixes `ui`-inside-`build` and version-token ranking, reserves source/engine
+diversity under the card cap, adds rank-aware eval assertions, and confines
+RAG roots, recursive scans, manifest `textPath` reads, fixed index leaves,
+eval files, and source-fingerprint metadata probes without following symlinks
+or reparse points. R1 adds interruption recovery, deterministic CJK/Latin
+tokenization, known-engine-only numeric filtering, isolated `allowEmptyIndex`,
+Chat refresh backoff, skipped-HTML cleanup, and Windows CI hardening. Unchanged
+warm index reads use cards/manifest size and timestamp metadata to bypass pair
+recovery, hashing, and JSONL parsing; cold or changed pairs still run full
+recovery and verification. The root host now targets 5.7;
+`project_version_migration` accepts primary 5.7/5.8 and
+maintenance 5.6. Registry count stays 190 and validation is 190/190. Detailed
+development notes are in `Docs/Development-0.35.md`.
+
+Previous public release status: v0.34.0 (2026-07-02) ships the Make-Tool-Set
 vetting foundation plus the Codex bridge workspace-write network fix. Task
 Atlas generated composites (`user.atlas_*`) can be approved in-editor with
 "Approve real writes" and then execute their dangerous `call_tool` steps for

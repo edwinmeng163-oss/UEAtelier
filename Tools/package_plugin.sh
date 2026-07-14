@@ -14,10 +14,14 @@ Usage: bash Tools/package_plugin.sh [--output <dir>] [--version <name>]
                                     [--bridge-bundle-path <dir-or-archive>]
                                     [--engine-tag <tag>]
 
-Builds a source-only project-root UnrealMcp zip for macOS UE 5.6/5.7 pilots.
+Builds a source-only project-root UnrealMcp zip for the primary UE 5.7/5.8 support line.
 With --full-experience, builds a project-root zip that includes plugin source,
 prebuilt Win64 UE 5.6.1 binaries, Tools starters, docs, schemas, and the
 offline Codex bridge bundle.
+
+The source-only path stages and verifies files; it does not run UBT. Before a
+v0.35 release, verify the candidate with real UE 5.7 and UE 5.8 UBT plus
+clean-project endpoint and MCP SDK conformance smoke.
 USAGE
 }
 
@@ -200,6 +204,7 @@ parsed_version="$(sed -n 's/^[[:space:]]*"VersionName"[[:space:]]*:[[:space:]]*"
 if [ -z "$version_name" ]; then
   version_name="$parsed_version"
 fi
+[ "$version_name" = "$parsed_version" ] || die "Requested version '$version_name' does not match UnrealMcp.uplugin VersionName '$parsed_version'"
 
 [ -f "$mirror_registry" ] || die "Missing plugin registry mirror: Plugins/UnrealMcp/Resources/ToolRegistry/tools.json"
 [ ! -L "$mirror_registry" ] || die "Phase 1 fix not applied: see commit 00fbf5e"
@@ -241,6 +246,8 @@ if [ "$full_experience" -eq 1 ]; then
   cp "$install_resource" "$stage_plugin/INSTALL.md"
 
   copy_clean_dir "$repo_root/Tools/UnrealMcpToolRegistry" "$stage_tools/UnrealMcpToolRegistry" --exclude '.DS_Store' --exclude 'Saved/'
+  cp "$repo_root/Tools/unreal_mcp_fetch_docs.py" "$stage_tools/unreal_mcp_fetch_docs.py"
+  cp "$repo_root/Tools/install_unrealmcp_to_project.py" "$stage_tools/install_unrealmcp_to_project.py"
   copy_clean_dir "$python_tools_dir" "$stage_tools/UnrealMcpPyTools" \
     --exclude '__pycache__/' --exclude '*.pyc' --exclude '.DS_Store'
   copy_clean_dir "$repo_root/Tools/UnrealMcpSkills/mcp-self-extension" "$stage_tools/UnrealMcpSkills/mcp-self-extension" --exclude '.DS_Store' --exclude 'Saved/'
@@ -272,6 +279,8 @@ if [ "$full_experience" -eq 1 ]; then
   [ -f "$stage_plugin/Binaries/Win64/UnrealEditor.modules" ] || die "Staging integrity failure: missing bundled UnrealEditor.modules"
   cmp -s "$stage_plugin/Resources/ToolRegistry/tools.json" "$canonical_registry" || die "Staging integrity failure: staged plugin registry differs from canonical registry"
   cmp -s "$stage_tools/UnrealMcpToolRegistry/tools.json" "$canonical_registry" || die "Staging integrity failure: staged Tools registry differs from canonical registry"
+  [ -f "$stage_tools/unreal_mcp_fetch_docs.py" ] && [ ! -L "$stage_tools/unreal_mcp_fetch_docs.py" ] || die "Staging integrity failure: Tools/unreal_mcp_fetch_docs.py is missing or not a plain file"
+  [ -f "$stage_tools/install_unrealmcp_to_project.py" ] && [ ! -L "$stage_tools/install_unrealmcp_to_project.py" ] || die "Staging integrity failure: Tools/install_unrealmcp_to_project.py is missing or not a plain file"
   [ -f "$stage_tools/UnrealMcpPyTools/editor_python_runtime_info/main.py" ] || die "Staging integrity failure: missing Tools/UnrealMcpPyTools/editor_python_runtime_info/main.py"
   [ -f "$stage_tools/UnrealMcpToolScaffolds/fps_bootstrap/ScaffoldMetadata.json" ] || die "Staging integrity failure: missing Tools/UnrealMcpToolScaffolds/fps_bootstrap/ScaffoldMetadata.json"
   [ -f "$stage_tools/UnrealMcpToolScaffolds/verify_input_drives_pawn/ScaffoldMetadata.json" ] || die "Staging integrity failure: missing Tools/UnrealMcpToolScaffolds/verify_input_drives_pawn/ScaffoldMetadata.json"
@@ -307,6 +316,8 @@ else
   # pilots must include this project-root Tools tree alongside the plugin.
   copy_clean_dir "$repo_root/Tools/UnrealMcpToolRegistry" "$stage_tools/UnrealMcpToolRegistry" \
     --exclude '.DS_Store' --exclude 'Saved/'
+  cp "$repo_root/Tools/unreal_mcp_fetch_docs.py" "$stage_tools/unreal_mcp_fetch_docs.py"
+  cp "$repo_root/Tools/install_unrealmcp_to_project.py" "$stage_tools/install_unrealmcp_to_project.py"
   rsync --archive --delete \
     --exclude '__pycache__/' \
     --exclude '*.pyc' \
@@ -315,7 +326,7 @@ else
   copy_clean_dir "$repo_root/Tools/UnrealMcpSkills" "$stage_tools/UnrealMcpSkills" \
     --exclude '.DS_Store' --exclude '.Rhistory' --exclude 'Saved/'
   copy_clean_dir "$repo_root/Tools/UnrealMcpKnowledge" "$stage_tools/UnrealMcpKnowledge" \
-    --exclude '.DS_Store' --exclude 'Saved/'
+    --exclude '__pycache__/' --exclude '*.pyc' --exclude '.DS_Store' --exclude 'Saved/'
   copy_clean_dir "$repo_root/Tools/UnrealMcpTests" "$stage_tools/UnrealMcpTests" \
     --exclude '.DS_Store' --exclude 'Saved/'
   copy_clean_dir "$repo_root/Tools/UnrealMcpCodexBridge" "$stage_tools/UnrealMcpCodexBridge" \
@@ -338,6 +349,8 @@ else
   [ -f "$stage_plugin/INSTALL.md" ] || die "Staging integrity failure: missing Plugins/UnrealMcp/INSTALL.md"
   cmp -s "$stage_tools/UnrealMcpToolRegistry/tools.json" "$canonical_registry" || die "Staging integrity failure: staged Tools registry differs from canonical registry"
   cmp -s "$stage_tools/UnrealMcpToolRegistry/schema.json" "$canonical_registry_schema" || die "Staging integrity failure: staged Tools registry schema differs from canonical schema"
+  [ -f "$stage_tools/unreal_mcp_fetch_docs.py" ] && [ ! -L "$stage_tools/unreal_mcp_fetch_docs.py" ] || die "Staging integrity failure: Tools/unreal_mcp_fetch_docs.py is missing or not a plain file"
+  [ -f "$stage_tools/install_unrealmcp_to_project.py" ] && [ ! -L "$stage_tools/install_unrealmcp_to_project.py" ] || die "Staging integrity failure: Tools/install_unrealmcp_to_project.py is missing or not a plain file"
   [ -f "$stage_py_tools/editor_python_runtime_info/main.py" ] || die "Staging integrity failure: missing Tools/UnrealMcpPyTools/editor_python_runtime_info/main.py"
   [ -f "$stage_tools/UnrealMcpPyToolSamples/call_tool_demo/main.py" ] || die "Staging integrity failure: missing Tools/UnrealMcpPyToolSamples/call_tool_demo/main.py"
   [ -f "$stage_tools/UnrealMcpSkills/mcp-self-extension/SKILL.md" ] || die "Staging integrity failure: missing Tools/UnrealMcpSkills/mcp-self-extension/SKILL.md"
@@ -357,7 +370,7 @@ else
   [ -z "$excluded_paths" ] || die "Staging integrity failure: excluded path present: $(printf '%s' "$excluded_paths" | head -n 1)"
   [ ! -e "$stage_plugin/Source/UnrealMcp/Private/Tests" ] || die "Staging integrity failure: excluded path present: Plugins/UnrealMcp/Source/UnrealMcp/Private/Tests"
 
-  zip_name="UnrealMcp-v${version_name}-mac-ue56-ue57-projectroot.zip"
+  zip_name="UnrealMcp-v${version_name}-mac-ue57-ue58-projectroot.zip"
 fi
 package_mode="source"
 if [ "$full_experience" -eq 1 ]; then
@@ -396,5 +409,5 @@ printf 'SHA-256: %s\n' "$sha_value"
 if [ "$full_experience" -eq 1 ]; then
   printf 'Done. Next: open this on a clean Windows UE 5.6.1 project; see Docs/FIRST_LAUNCH.md.\n'
 else
-  printf "Done. Next: extract the zip into a pilot user's <UserProject>/ root, next to the .uproject; do not extract it under Plugins/. See Plugins/UnrealMcp/INSTALL.md inside the zip.\n"
+  printf 'Done. Next: verify this candidate in clean UE 5.7 and UE 5.8 projects with real UBT, endpoint smoke, and MCP SDK conformance. Extract at <UserProject>/ root, not under Plugins/; see Plugins/UnrealMcp/INSTALL.md.\n'
 fi

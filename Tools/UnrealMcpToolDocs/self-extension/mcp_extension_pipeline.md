@@ -3,9 +3,9 @@
 **Category**: self-extension
 **Title**: Run Extension Pipeline
 **Risk level**: critical
-**Exposure**: developer/manual only; hidden from AI-facing `tools/list`
+**Exposure**: legacy_hidden
 
-Orchestrates scaffold validation, apply, build, restart handoff, and test execution for a new core MCP tool. This is a manual developer core-integration path; AI self-extension uses project-local Python user tools instead.
+Orchestrates scaffold validation, apply, build, restart handoff, and test execution for a new MCP tool.
 
 ## Capabilities
 

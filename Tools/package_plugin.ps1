@@ -1,9 +1,12 @@
 <#
-Builds a source-only project-root UnrealMcp zip for Windows UE 5.6/5.7 pilots, or a
-project-root full-experience zip with prebuilt UE 5.6.1 Win64 binaries.
+Builds a source-only project-root UnrealMcp development-candidate zip for the
+primary Windows UE 5.7/5.8 line, or the historical full-experience shape with
+prebuilt UE 5.6.1 Win64 binaries.
 
-This PowerShell port is syntax-only verified on macOS. Stage 2 real Win64
-verification on collaborator hardware is pending; track the pilot release at:
+The source-only path stages and verifies files; it does not run UBT. Real
+Windows UBT under both UE 5.7 and UE 5.8, followed by clean-project endpoint
+and MCP SDK conformance smoke, is required before v0.35 release. The historical
+full-experience pilot is recorded at:
 https://github.com/edwinmeng163-oss/UEAtelier/releases/tag/v0.12.0-pilot-mac-ue56-ue57
 #>
 
@@ -244,6 +247,9 @@ try {
     if ([string]::IsNullOrWhiteSpace($Version)) {
         $Version = $parsedVersion
     }
+    if ($Version -ne $parsedVersion) {
+        Die "Requested version '$Version' does not match UnrealMcp.uplugin VersionName '$parsedVersion'"
+    }
 
     Assert-PlainFile $mirrorRegistry `
         "Missing plugin registry mirror: Plugins/UnrealMcp/Resources/ToolRegistry/tools.json" `
@@ -300,6 +306,8 @@ try {
         $stageTools = Join-Path $stageParent "Tools"
         New-Item -ItemType Directory -Force -Path $stageTools | Out-Null
         Copy-CleanDirectory (Join-Path $repoRoot "Tools/UnrealMcpToolRegistry") (Join-Path $stageTools "UnrealMcpToolRegistry") @(".DS_Store", "Saved")
+        Copy-Item -LiteralPath (Join-Path $repoRoot "Tools/unreal_mcp_fetch_docs.py") -Destination $stageTools -Force
+        Copy-Item -LiteralPath (Join-Path $repoRoot "Tools/install_unrealmcp_to_project.py") -Destination $stageTools -Force
         Copy-CleanDirectory $pythonToolsDir (Join-Path $stageTools "UnrealMcpPyTools") @("__pycache__", "*.pyc", ".DS_Store")
         Copy-CleanDirectory (Join-Path $repoRoot "Tools/UnrealMcpSkills/mcp-self-extension") (Join-Path $stageTools "UnrealMcpSkills/mcp-self-extension") @(".DS_Store", "Saved")
         Copy-CleanDirectory (Join-Path $repoRoot "Tools/UnrealMcpKnowledge/Sources") (Join-Path $stageTools "UnrealMcpKnowledge/Sources") @(".DS_Store", "Saved")
@@ -349,6 +357,12 @@ try {
             $canonicalRegistry "Staging integrity failure: staged plugin registry differs from canonical registry"
         Assert-SameFileHash (Join-Path $stageTools "UnrealMcpToolRegistry/tools.json") `
             $canonicalRegistry "Staging integrity failure: staged Tools registry differs from canonical registry"
+        Assert-PlainFile (Join-Path $stageTools "unreal_mcp_fetch_docs.py") `
+            "Staging integrity failure: missing Tools/unreal_mcp_fetch_docs.py" `
+            "Staging integrity failure: staged Tools/unreal_mcp_fetch_docs.py is a reparse point"
+        Assert-PlainFile (Join-Path $stageTools "install_unrealmcp_to_project.py") `
+            "Staging integrity failure: missing Tools/install_unrealmcp_to_project.py" `
+            "Staging integrity failure: staged Tools/install_unrealmcp_to_project.py is a reparse point"
         Assert-PlainFile (Join-Path $stageTools "UnrealMcpPyTools/editor_python_runtime_info/main.py") `
             "Staging integrity failure: missing Tools/UnrealMcpPyTools/editor_python_runtime_info/main.py" `
             "Staging integrity failure: staged Python handler is a symlink"
@@ -388,9 +402,11 @@ try {
         # <ProjectDir>/Tools/UnrealMcpPyTools/<handlerId>/main.py, so source-only
         # pilots must include this project-root Tools tree alongside the plugin.
         Copy-CleanDirectory (Join-Path $repoRoot "Tools/UnrealMcpToolRegistry") (Join-Path $stageTools "UnrealMcpToolRegistry") @(".DS_Store", "Saved")
+        Copy-Item -LiteralPath (Join-Path $repoRoot "Tools/unreal_mcp_fetch_docs.py") -Destination $stageTools -Force
+        Copy-Item -LiteralPath (Join-Path $repoRoot "Tools/install_unrealmcp_to_project.py") -Destination $stageTools -Force
         Copy-CleanDirectory $pythonToolsDir $stagePyTools @("__pycache__", "*.pyc", ".DS_Store")
         Copy-CleanDirectory (Join-Path $repoRoot "Tools/UnrealMcpSkills") (Join-Path $stageTools "UnrealMcpSkills") @(".DS_Store", ".Rhistory", "Saved")
-        Copy-CleanDirectory (Join-Path $repoRoot "Tools/UnrealMcpKnowledge") (Join-Path $stageTools "UnrealMcpKnowledge") @(".DS_Store", "Saved")
+        Copy-CleanDirectory (Join-Path $repoRoot "Tools/UnrealMcpKnowledge") (Join-Path $stageTools "UnrealMcpKnowledge") @("__pycache__", "*.pyc", ".DS_Store", "Saved")
         Copy-CleanDirectory (Join-Path $repoRoot "Tools/UnrealMcpTests") (Join-Path $stageTools "UnrealMcpTests") @(".DS_Store", "Saved")
         Copy-CleanDirectory (Join-Path $repoRoot "Tools/UnrealMcpCodexBridge") (Join-Path $stageTools "UnrealMcpCodexBridge") @("node_modules", "runtime", "Intermediate", "Saved", "DerivedDataCache", ".DS_Store")
         Copy-CleanDirectory (Join-Path $repoRoot "Tools/UnrealMcpToolScaffoldStarters") $stageScaffoldStarters @(".DS_Store", "Saved")
@@ -418,6 +434,12 @@ try {
             $canonicalRegistry "Staging integrity failure: staged Tools registry differs from canonical registry"
         Assert-SameFileHash (Join-Path $stageTools "UnrealMcpToolRegistry/schema.json") `
             $canonicalRegistrySchema "Staging integrity failure: staged Tools registry schema differs from canonical schema"
+        Assert-PlainFile (Join-Path $stageTools "unreal_mcp_fetch_docs.py") `
+            "Staging integrity failure: missing Tools/unreal_mcp_fetch_docs.py" `
+            "Staging integrity failure: staged Tools/unreal_mcp_fetch_docs.py is a reparse point"
+        Assert-PlainFile (Join-Path $stageTools "install_unrealmcp_to_project.py") `
+            "Staging integrity failure: missing Tools/install_unrealmcp_to_project.py" `
+            "Staging integrity failure: staged Tools/install_unrealmcp_to_project.py is a reparse point"
         Assert-PlainFile (Join-Path $stagePyTools "editor_python_runtime_info/main.py") `
             "Staging integrity failure: missing Tools/UnrealMcpPyTools/editor_python_runtime_info/main.py" `
             "Staging integrity failure: staged Python handler is a symlink"
@@ -466,7 +488,7 @@ try {
             Die "Staging integrity failure: excluded path present: Plugins/UnrealMcp/Source/UnrealMcp/Private/Tests"
         }
 
-        $zipName = "UnrealMcp-v$Version-win-ue56-ue57-projectroot.zip"
+        $zipName = "UnrealMcp-v$Version-win-ue57-ue58-projectroot.zip"
     }
     $packageMode = if ($FullExperience) { "full-win" } else { "source" }
     Push-Location $repoRoot
@@ -498,7 +520,7 @@ try {
     if ($FullExperience) {
         Write-Host "Done. Next: open this on a clean Windows UE 5.6.1 project; see Docs/FIRST_LAUNCH.md."
     } else {
-        Write-Host "Done. Next: extract the zip into a pilot user's <UserProject> root, next to the .uproject; do not extract it under Plugins/. See Plugins/UnrealMcp/INSTALL.md inside the zip."
+        Write-Host "Done. Next: verify this candidate in clean Windows UE 5.7 and UE 5.8 projects with real UBT, endpoint smoke, and MCP SDK conformance. Extract at <UserProject> root, not under Plugins/; see Plugins/UnrealMcp/INSTALL.md."
     }
 } catch {
     Write-Error -Message "Error: $($_.Exception.Message)" -ErrorAction Continue

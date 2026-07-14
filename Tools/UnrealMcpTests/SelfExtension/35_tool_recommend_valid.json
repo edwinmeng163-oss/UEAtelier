@@ -17,6 +17,7 @@
       "name": "unreal.tool_recommend",
       "arguments": {
         "task": "Create a Widget HUD and verify it with existing tools",
+        "indexRoot": "Saved/UnrealMcp/Tests/SelfExtensionKnowledge/Index",
         "riskMax": "medium",
         "limit": 6,
         "includeKnowledge": true,

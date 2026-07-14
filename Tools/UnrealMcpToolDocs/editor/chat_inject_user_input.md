@@ -23,10 +23,6 @@ Inject a user prompt into the editor Chat Panel as if the user typed Enter, trig
 ```json
 {
   "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "text"
-  ],
   "properties": {
     "text": {
       "type": "string",
@@ -43,7 +39,11 @@ Inject a user prompt into the editor Chat Panel as if the user typed Enter, trig
       "default": false,
       "description": "When true, report whether a panel is available without actually queuing the prompt."
     }
-  }
+  },
+  "required": [
+    "text"
+  ],
+  "additionalProperties": false
 }
 ```
 
@@ -53,13 +53,11 @@ _Provenance: schema-minimal_
 
 ```json
 {
-  "text": "Summarize the current editor status.",
-  "dryRun": true
+  "text": "<string>"
 }
 ```
 
 ## Provenance
-
 - Source docs: Docs/ChatSync.md
 - Reason: v0.31 R4 chunk 9 CLI to editor Chat Panel user-input injection.
-- Notes: AssistantRun approval is REQUIRED unless dryRun=true. Real injection writes chat state and can trigger an autonomous AI turn.
+- Notes: AssistantRun approval: required. Writes to editor chat state and can trigger an AI request that invokes additional tools.

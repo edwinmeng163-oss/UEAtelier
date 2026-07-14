@@ -4,7 +4,7 @@
 **Title**: Tail Chat Panel History
 **Risk level**: read_only
 
-Read the last N entries from the editor Chat Panel persisted history at `Saved/UnrealMcp/ChatHistory.json`.
+Read the last N entries from the editor Chat Panel persisted history (Saved/UnrealMcp/ChatHistory.json).
 
 ## Capabilities
 
@@ -23,7 +23,6 @@ Read the last N entries from the editor Chat Panel persisted history at `Saved/U
 ```json
 {
   "type": "object",
-  "additionalProperties": false,
   "properties": {
     "count": {
       "type": "integer",
@@ -38,7 +37,8 @@ Read the last N entries from the editor Chat Panel persisted history at `Saved/U
       "description": "Optional ActivityLog sessionId. Default: current process session."
     }
   },
-  "required": []
+  "required": [],
+  "additionalProperties": false
 }
 ```
 
@@ -51,7 +51,6 @@ _Provenance: schema-minimal_
 ```
 
 ## Provenance
-
 - Source docs: Docs/ChatSync.md
 - Reason: v0.31 R4 chunk 9 read-only editor Chat Panel history tail.
-- Notes: AssistantRun approval is not required. Response entries omit details, tool summaries, approval scaffolding, and truncate bodies.
+- Notes: AssistantRun approval: not_required. Read-only chat dialog and tool log surfaces with body truncation and argument-value redaction.

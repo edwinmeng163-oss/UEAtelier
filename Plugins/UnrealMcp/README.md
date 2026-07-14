@@ -2,7 +2,11 @@
 
 This plugin runs a local Model Context Protocol server inside Unreal Editor and adds an in-editor command and AI chat window.
 
-Current plugin `VersionName: 0.34.0`.
+Current development plugin `VersionName: 0.35.0`. UE 5.7 and UE 5.8 are the
+primary source-build targets; UE 5.6 remains a maintenance compile canary. The
+root `UEvolve.uproject` host targets 5.7, and `Examples/UEvolveExample57` is
+reused for 5.8 validation instead of duplicating the sample-content host. The
+latest public release remains v0.34.0.
 
 ## What It Exposes
 
@@ -634,7 +638,7 @@ Inspect pipeline state and last source apply:
 
 `unreal.workflow_run` is the generic composition executor for bounded high-level tool combinations. It accepts inline `steps`, a `workflowJson` string, or a project-local `workflowPath`, defaults to `dryRun:true`, blocks nested workflows, rejects hidden tools, blocks high/critical step tools unless explicitly allowed, executes every remaining step through the normal MCP handler path, and can write `chat.active_task` for continuation after planned, paused, or completed workflows.
 
-`unreal.knowledge_search`, `unreal.tool_recommend`, `unreal.tool_gap_analyze`, `unreal.workflow_recommend`, and `unreal.knowledge_eval_run` are the local RAG-facing planning tools. Chat builds a compact RAG/tool-planning capsule before AI turns; if the local KnowledgeCard index is missing, it can run `unreal.knowledge_index_refresh` and retry. The index is written under `Saved/UnrealMcp/KnowledgeIndex`, while fetched official documentation caches stay under `Saved/UnrealMcp/KnowledgeSources`.
+`unreal.knowledge_search`, `unreal.tool_recommend`, `unreal.tool_gap_analyze`, `unreal.workflow_recommend`, and `unreal.knowledge_eval_run` are the local RAG-facing planning tools. Chat builds a compact RAG/tool-planning capsule before AI turns and uses the index's machine-readable `missing|empty|stale|ready|corrupt` status to decide whether to refresh and retry. KnowledgeIndex v2 stages and verifies same-directory candidates, retains a verified backup pair until replacement verification succeeds, restores it after interrupted/failed replacement, preserves last-known-good state when a real refresh would produce zero cards, and records hashes, freshness/build metadata, plus source-kind/engine counts. Unchanged warm reads use cards/manifest size and timestamp metadata to reuse parsed cards without full recovery, hashing, JSONL parsing, or temp scanning; cold or changed pairs still run recovery and full verification. ActivityLog indexing is off by default, promoted local markdown has a separate toggle, search is boundary/version/diversity aware, and eval cases can assert result rank. Chat attempts a failed automatic RAG refresh only once per panel session. The 5.7 and 5.8 official-doc manifests and local caches remain separate. The index is written under `Saved/UnrealMcp/KnowledgeIndex`, while fetched official documentation caches stay under `Saved/UnrealMcp/KnowledgeSources`.
 
 The Workbench UI is intentionally thin: it calls the same MCP tools used by Chat and displays the latest structured result. It currently exposes safe operational buttons for status refresh, audit, core test suite, pipeline status, lock status, Skill Activity status, draft distillation, promote dry-run, Knowledge refresh/search/tool recommendation/eval, and copying the latest result. High-risk actions such as apply, build, restart, real promote, and rollback should stay behind the existing dry-run, lock, supervisor, and manifest workflow until the UI adds explicit confirmation surfaces.
 

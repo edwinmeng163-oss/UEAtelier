@@ -65,29 +65,36 @@ Two options, in order of preference:
 
 ---
 
-## 2. Verify both UE 5.6 dev host AND UE 5.7 example host
+## 2. Verify both primary engines: UE 5.7 AND UE 5.8
 
 ### Trap
-Most release builds run against `Examples/UEvolveExample57/UEvolveExample57.uproject` (UE 5.7 example host). The local `UEvolve.uproject` (UE 5.6 dev host) is rarely tested in CI. Adaptive unity exclusion and engine-version differences can hide bugs from one but not the other.
+The v0.35 source line uses UE 5.7 and UE 5.8 as primary release gates. Both
+reuse `Examples/UEvolveExample57/UEvolveExample57.uproject`; switching the
+engine executable without cleaning plugin/example build products can silently
+reuse the wrong ABI. Adaptive unity exclusion and engine-version differences
+can also hide bugs from one engine but not the other.
 
 ### Why it matters
-Plugin users will eventually run both UE 5.6 and UE 5.7. A "passing release" that only built against one engine is half-tested.
+Primary support promises both UE 5.7 and UE 5.8. UE 5.6 remains a maintenance
+compile canary during this transition, not a v0.35 primary release gate.
 
 ### Required pre-release check
 
 ```bash
 # UE 5.7 example host (canonical target name is MyProjectEditor, NOT UEvolveExample57Editor)
-rm -rf Plugins/UnrealMcp/Binaries Plugins/UnrealMcp/Intermediate
+rm -rf Plugins/UnrealMcp/Binaries Plugins/UnrealMcp/Intermediate \
+  Examples/UEvolveExample57/Binaries Examples/UEvolveExample57/Intermediate
 "/Users/Shared/Epic Games/UE_5.7/Engine/Build/BatchFiles/Mac/Build.sh" \
   MyProjectEditor Mac Development \
   -project="$(pwd)/Examples/UEvolveExample57/UEvolveExample57.uproject" \
   -WaitMutex
 
-# UE 5.6 dev host (target name is UEvolveEditor — different from above!)
-rm -rf Plugins/UnrealMcp/Binaries Plugins/UnrealMcp/Intermediate Binaries Intermediate
-"/Users/Shared/Epic Games/UE_5.6/Engine/Build/BatchFiles/Mac/Build.sh" \
-  UEvolveEditor Mac Development \
-  -project="$(pwd)/UEvolve.uproject" \
+# UE 5.8 reuses the same source/content host; clean before switching engines
+rm -rf Plugins/UnrealMcp/Binaries Plugins/UnrealMcp/Intermediate \
+  Examples/UEvolveExample57/Binaries Examples/UEvolveExample57/Intermediate
+"/Users/Shared/Epic Games/UE_5.8/Engine/Build/BatchFiles/Mac/Build.sh" \
+  MyProjectEditor Mac Development \
+  -project="$(pwd)/Examples/UEvolveExample57/UEvolveExample57.uproject" \
   -WaitMutex
 ```
 
@@ -112,10 +119,10 @@ ls Examples/UEvolveExample/Source/*.Target.cs
 ls Source/*.Target.cs
 ```
 
-Canonical targets as of v0.19.1:
-- `Examples/UEvolveExample57/Source/MyProjectEditor.Target.cs` (UE 5.7 example host)
-- `Examples/UEvolveExample/Source/MyProjectEditor.Target.cs` (UE 5.6 example host)
-- `Source/UEvolveEditor.Target.cs` (UE 5.6 dev host)
+Current canonical targets:
+- `Examples/UEvolveExample57/Source/MyProjectEditor.Target.cs` (UE 5.7/5.8 primary host)
+- `Examples/UEvolveExample/Source/MyProjectEditor.Target.cs` (UE 5.6 maintenance canary)
+- `Source/UEvolveEditor.Target.cs` (root UE 5.7 development host)
 
 ---
 
@@ -226,7 +233,7 @@ Extract the produced zip into a scratch dir and diff its tree against expectatio
 
 ```bash
 cd /tmp && rm -rf zver && mkdir zver && cd zver
-unzip -q "$REPO/Saved/UnrealMcp/Packages/UnrealMcp-vX.Y.Z-mac-ue56-ue57-projectroot.zip"
+unzip -q "$REPO/Saved/UnrealMcp/Packages/UnrealMcp-vX.Y.Z-mac-ue57-ue58-projectroot.zip"
 ls Tools/UnrealMcpSkills/                 # only committed skills should appear
 find Tools/UnrealMcpPyTools -maxdepth 1    # no incident/test tool dirs
 python3 -c "import json;print(len(json.load(open('Plugins/UnrealMcp/Resources/ToolRegistry/tools.json'))['tools']))"  # expect canonical count
@@ -250,7 +257,12 @@ gh release edit vX.Y.Z --notes-file <body>            # if the body quoted the o
 - Note the CI Win zip does **not** have this failure mode: `win-release-package.yml` does `actions/checkout` at the tag, so it builds from the **committed** tree only. Untracked cruft can't reach it. (Win-zip attach has a *different* gotcha — a timing race — documented in `Docs/WindowsPackaging.md` top caveat + § 3.2.)
 
 ### Sub-trap — stray `__pycache__` trips the integrity check
-If a test (or manual run) imports the Python scaffold templates, it leaves `Plugins/UnrealMcp/Resources/ScaffoldTemplates/python/__pycache__/`. The packager's staging-integrity check rejects it (`excluded path present: …/__pycache__`) and aborts. It's gitignored (won't commit) but is physically present. Fix: `rm -rf` that `__pycache__` before running `package_plugin.sh`.
+If a test (or manual run) imports Python sources, it can leave an ignored
+`__pycache__/` under a staged subtree. The packager's staging-integrity check
+rejects any cache that reaches staging. v0.35 explicitly filters caches from
+`Tools/UnrealMcpKnowledge` as well as the existing Python-tool directories;
+new staged Python subtrees must add the same exclusion in both packagers.
+Older branches may still require deleting the cache before packaging.
 
 ---
 
@@ -334,8 +346,9 @@ Until Windows compile-in-CI is established, treat Windows packaging validation a
 
 - [ ] `MyProjectEditor` target name confirmed for example hosts, `UEvolveEditor` for dev host
 - [ ] `rm -rf Plugins/UnrealMcp/Binaries Plugins/UnrealMcp/Intermediate` before every smoke
-- [ ] UE 5.6 dev host build PASS
-- [ ] UE 5.7 example host build PASS
+- [ ] UE 5.7 primary example-host build PASS
+- [ ] UE 5.8 primary build of the same example host PASS after cleaning cross-engine intermediates
+- [ ] UE 5.6 maintenance static canary PASS (`check_ue56_compat.py`)
 - [ ] All 4 validators PASS (`validate_tool_registry`, `check_ue56_compat`, mirror cmp, `verify_package_integrity`)
 - [ ] ASCII scan on touched `.cpp` / `.h` files PASS
 - [ ] Tool count matches in `AGENTS.md`, all `README.md` language sections, `Plugins/UnrealMcp/README.md`

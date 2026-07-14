@@ -17,8 +17,13 @@
       "name": "unreal.knowledge_index_refresh",
       "arguments": {
         "includeOfficialDocs": false,
+        "includePromotedSources": false,
         "includeVersionedDocs": true,
         "includeToolRegistry": true,
+        "includeActivityLog": false,
+        "includeSkills": true,
+        "allowEmptyIndex": false,
+        "indexRoot": "Saved/UnrealMcp/Tests/SelfExtensionKnowledge/Index",
         "maxCards": 60,
         "maxChunkChars": 1200,
         "chunkOverlapChars": 80

@@ -610,7 +610,7 @@ namespace UnrealMcp
 
 			{
 				TSharedPtr<FJsonObject> Properties = MakeShared<FJsonObject>();
-				Properties->SetObjectField(TEXT("targetEngineVersion"), MakeStringProperty(TEXT("Target EngineAssociation value. Supported values: 5.6 or 5.7."), FString()));
+				Properties->SetObjectField(TEXT("targetEngineVersion"), MakeEnumStringProperty(TEXT("Target EngineAssociation value. UE 5.7 and 5.8 are primary; UE 5.6 is maintenance."), FString(), TArray<FString>{ TEXT("5.6"), TEXT("5.7"), TEXT("5.8") }));
 				Properties->SetObjectField(TEXT("dryRun"), MakeBoolProperty(TEXT("Preview the EngineAssociation edit and compatibility warnings without writing the .uproject."), true));
 				Properties->SetObjectField(TEXT("projectFilePath"), MakeStringProperty(TEXT("Absolute .uproject path to edit. Defaults to the current project file."), FString()));
 				TArray<TSharedPtr<FJsonValue>> Required;
@@ -622,7 +622,7 @@ namespace UnrealMcp
 				FUnrealMcpToolDescriptor Descriptor = MakeDescriptor(
 					TEXT("unreal.project_version_migration"),
 					TEXT("Project Version Migration"),
-					TEXT("Updates a .uproject EngineAssociation between UE 5.6 and UE 5.7 and reports remaining manual rebuild steps."),
+					TEXT("Updates a .uproject EngineAssociation across UE 5.6, UE 5.7, and UE 5.8, reports the support tier, and lists remaining manual rebuild steps."),
 					TEXT("editor"),
 					TEXT("UnrealMcpEditorTools.cpp"),
 					EUnrealMcpToolRisk::High);
@@ -631,7 +631,7 @@ namespace UnrealMcp
 				Descriptor.bPreflightSupport = true;
 				Descriptor.bPostcheckSupport = true;
 				Descriptor.TestCoverage = EUnrealMcpToolTestCoverage::Core;
-				Descriptor.Reason = TEXT("Descriptor: v0.15 chunk 5 migration tool for reversible .uproject EngineAssociation changes.");
+				Descriptor.Reason = TEXT("Descriptor: v0.35 support-contract tool for reversible primary UE 5.7/5.8 and maintenance UE 5.6 EngineAssociation changes.");
 				Registrar.Add(Descriptor, Schema);
 			}
 
@@ -2201,11 +2201,15 @@ namespace UnrealMcp
 
 			{
 				TSharedPtr<FJsonObject> Properties = MakeShared<FJsonObject>();
-				Properties->SetObjectField(TEXT("sourceRoot"), MakeStringProperty(TEXT("Optional root containing fetched knowledge sources. Defaults to Saved/UnrealMcp/KnowledgeSources."), FString()));
-				Properties->SetObjectField(TEXT("indexRoot"), MakeStringProperty(TEXT("Optional output directory for the generated KnowledgeCard index. Defaults to Saved/UnrealMcp/KnowledgeIndex."), FString()));
+				Properties->SetObjectField(TEXT("sourceRoot"), MakeStringProperty(TEXT("Optional project-Saved root containing fetched knowledge sources. Must remain inside the current project's Saved directory; defaults to Saved/UnrealMcp/KnowledgeSources."), FString()));
+				Properties->SetObjectField(TEXT("indexRoot"), MakeStringProperty(TEXT("Optional project-Saved output directory for the generated KnowledgeCard index. Must remain inside the current project's Saved directory; defaults to Saved/UnrealMcp/KnowledgeIndex."), FString()));
 				Properties->SetObjectField(TEXT("includeOfficialDocs"), MakeBoolProperty(TEXT("Include fetched official documentation documents.jsonl files."), true));
+				Properties->SetObjectField(TEXT("includePromotedSources"), MakeBoolProperty(TEXT("Include promoted local markdown sources such as Task Atlas RAG cards independently of official docs."), true));
 				Properties->SetObjectField(TEXT("includeVersionedDocs"), MakeBoolProperty(TEXT("Include versioned README/Docs markdown files."), true));
 				Properties->SetObjectField(TEXT("includeToolRegistry"), MakeBoolProperty(TEXT("Include visible ToolRegistry entries as searchable tool cards."), true));
+				Properties->SetObjectField(TEXT("includeActivityLog"), MakeBoolProperty(TEXT("Include local activity-log summary cards. Disabled by default because logs can contain project-specific context."), false));
+				Properties->SetObjectField(TEXT("includeSkills"), MakeBoolProperty(TEXT("Include promoted project skills as searchable cards."), true));
+				Properties->SetObjectField(TEXT("allowEmptyIndex"), MakeBoolProperty(TEXT("Allow an explicitly empty index only when indexRoot is explicitly under Saved/UnrealMcp/Tests. By default, an empty refresh preserves the last-known-good index."), false));
 				Properties->SetObjectField(TEXT("skipLowContent"), MakeBoolProperty(TEXT("Skip source rows flagged as low-content by the docs fetcher."), true));
 				Properties->SetObjectField(TEXT("maxCards"), MakeNumberProperty(TEXT("Maximum KnowledgeCards to write."), 2000.0));
 				Properties->SetObjectField(TEXT("maxChunkChars"), MakeNumberProperty(TEXT("Maximum text characters per card chunk."), 1800.0));
@@ -2230,10 +2234,27 @@ namespace UnrealMcp
 			}
 
 			{
+				const TArray<FString> KnowledgeSourceKinds = {
+					TEXT("tool-registry"),
+					TEXT("versioned-doc"),
+					TEXT("official-docs"),
+					TEXT("skill"),
+					TEXT("runtime-memory"),
+					TEXT("activity-log"),
+					TEXT("test-fixture"),
+					TEXT("unknown")
+				};
 				TSharedPtr<FJsonObject> Properties = MakeShared<FJsonObject>();
 				Properties->SetObjectField(TEXT("query"), MakeStringProperty(TEXT("Search query for local KnowledgeCards."), FString()));
 				Properties->SetObjectField(TEXT("categories"), MakeStringArrayProperty(TEXT("Optional KnowledgeCard categories to include.")));
-				Properties->SetObjectField(TEXT("indexRoot"), MakeStringProperty(TEXT("Optional index directory. Defaults to Saved/UnrealMcp/KnowledgeIndex."), FString()));
+				TSharedPtr<FJsonObject> SourceKindsProperty = MakeStringArrayProperty(TEXT("Optional sourceKind values to include."));
+				TSharedPtr<FJsonObject> SourceKindItems = MakeShared<FJsonObject>();
+				SourceKindItems->SetStringField(TEXT("type"), TEXT("string"));
+				SourceKindItems->SetArrayField(TEXT("enum"), MakeEnumValues(KnowledgeSourceKinds));
+				SourceKindsProperty->SetObjectField(TEXT("items"), SourceKindItems);
+				Properties->SetObjectField(TEXT("sourceKinds"), SourceKindsProperty);
+				Properties->SetObjectField(TEXT("groupByKind"), MakeBoolProperty(TEXT("Group results by sourceKind instead of returning one flat results array."), false));
+				Properties->SetObjectField(TEXT("indexRoot"), MakeStringProperty(TEXT("Optional index directory inside the current project's Saved directory. Defaults to Saved/UnrealMcp/KnowledgeIndex."), FString()));
 				Properties->SetObjectField(TEXT("limit"), MakeNumberProperty(TEXT("Maximum search results."), 8.0));
 				Properties->SetObjectField(TEXT("maxExcerptChars"), MakeNumberProperty(TEXT("Maximum excerpt characters per result."), 420.0));
 				Properties->SetObjectField(TEXT("includeText"), MakeBoolProperty(TEXT("Include full card text in results. Off by default to keep Chat context compact."), false));
@@ -2253,6 +2274,7 @@ namespace UnrealMcp
 			{
 				TSharedPtr<FJsonObject> Properties = MakeShared<FJsonObject>();
 				Properties->SetObjectField(TEXT("task"), MakeStringProperty(TEXT("Natural-language task to map to existing tools and workflows."), FString()));
+				Properties->SetObjectField(TEXT("indexRoot"), MakeStringProperty(TEXT("Optional knowledge index directory inside the current project's Saved directory for test isolation. Defaults to Saved/UnrealMcp/KnowledgeIndex."), FString()));
 				Properties->SetObjectField(TEXT("riskMax"), MakeStringProperty(TEXT("Maximum risk to recommend: read_only, low, medium, high, or critical."), TEXT("critical")));
 				Properties->SetObjectField(TEXT("limit"), MakeNumberProperty(TEXT("Maximum tool recommendations."), 8.0));
 				Properties->SetObjectField(TEXT("includeKnowledge"), MakeBoolProperty(TEXT("Include top matching KnowledgeCards when the index exists."), true));
@@ -2310,21 +2332,26 @@ namespace UnrealMcp
 
 			{
 				TSharedPtr<FJsonObject> Properties = MakeShared<FJsonObject>();
-				Properties->SetObjectField(TEXT("evalPath"), MakeStringProperty(TEXT("Project-local eval JSON file or directory. Defaults to Tools/UnrealMcpKnowledge/Evals."), FString()));
+				Properties->SetObjectField(TEXT("evalPath"), MakeStringProperty(TEXT("Eval JSON file or directory inside the current project or the shared Tools/UnrealMcpKnowledge/Evals root."), FString()));
+				Properties->SetObjectField(TEXT("indexRoot"), MakeStringProperty(TEXT("Optional KnowledgeIndex root inside the current project's Saved directory. Use an isolated Saved root for repeatable evals."), FString()));
 				Properties->SetObjectField(TEXT("refreshIndex"), MakeBoolProperty(TEXT("Refresh the local KnowledgeCard index before running evals."), false));
 				Properties->SetObjectField(TEXT("includeDetails"), MakeBoolProperty(TEXT("Include per-case structuredContent in the eval output."), true));
 				Properties->SetObjectField(TEXT("limit"), MakeNumberProperty(TEXT("Search/recommendation limit used by each eval case."), 6.0));
 				TSharedPtr<FJsonObject> Schema = MakeObjectSchema();
 				Schema->SetObjectField(TEXT("properties"), Properties);
-				Registrar.Add(
-					MakeDescriptor(
-						TEXT("unreal.knowledge_eval_run"),
-						TEXT("Run Knowledge Evals"),
-						TEXT("Runs the offline RAG retrieval evaluation suite under Tools/UnrealMcpKnowledge/Evals/ and reports recall plus per-question diagnostics."),
-						TEXT("self-extension"),
-						TEXT("UnrealMcpKnowledgeTools.cpp"),
-						EUnrealMcpToolRisk::ReadOnly),
-					Schema);
+				FUnrealMcpToolDescriptor Descriptor = MakeDescriptor(
+					TEXT("unreal.knowledge_eval_run"),
+					TEXT("Run Knowledge Evals"),
+					TEXT("Runs the offline RAG retrieval evaluation suite under Tools/UnrealMcpKnowledge/Evals/ and reports recall plus per-question diagnostics."),
+					TEXT("self-extension"),
+					TEXT("UnrealMcpKnowledgeTools.cpp"),
+					EUnrealMcpToolRisk::Low);
+				Descriptor.bRequiresWrite = true;
+				Descriptor.bPreflightSupport = true;
+				Descriptor.bPostcheckSupport = true;
+				Descriptor.TestCoverage = EUnrealMcpToolTestCoverage::Category;
+				Descriptor.Reason = TEXT("Descriptor: refreshIndex can replace a bounded project-Saved KnowledgeIndex before running local evals; evalPath is limited to project/shared eval roots.");
+				Registrar.Add(Descriptor, Schema);
 			}
 
 			{

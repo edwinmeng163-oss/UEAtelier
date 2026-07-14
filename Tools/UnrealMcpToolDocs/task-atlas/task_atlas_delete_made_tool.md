@@ -23,26 +23,29 @@ Remove a Task Atlas generated user composite and reload the user registry.
 ```json
 {
   "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "toolName",
-    "confirm"
-  ],
   "properties": {
     "toolName": {
       "type": "string",
       "minLength": 6,
-      "pattern": "^user\\.[A-Za-z0-9_]+$"
+      "pattern": "^user\\.[A-Za-z0-9_]+$",
+      "description": "Generated user tool name to delete. Only tools with Task Atlas generator metadata are eligible."
     },
     "confirm": {
       "type": "boolean",
-      "const": true
+      "const": true,
+      "description": "Must be true. The tool refuses deletion without explicit confirmation."
     },
     "dryRun": {
       "type": "boolean",
-      "default": false
+      "default": false,
+      "description": "When true, report the target dir and reload effect without deleting. confirm=true is still required."
     }
-  }
+  },
+  "required": [
+    "toolName",
+    "confirm"
+  ],
+  "additionalProperties": false
 }
 ```
 
@@ -52,13 +55,12 @@ _Provenance: schema-minimal_
 
 ```json
 {
-  "toolName": "user.task_atlas_slug",
-  "confirm": true
+  "toolName": "actor-name",
+  "confirm": false
 }
 ```
 
 ## Provenance
-
 - Source docs: Docs/TaskAtlas.md
 - Reason: v0.31 Task Atlas generated composite deletion wrapper with confirm guard.
-- Notes: AssistantRun approval is required for dryRun=false deletion. The wrapper refuses confirm=false and the service refuses non-Task-Atlas-generated tools.
+- Notes: AssistantRun approval: required for dryRun=false deletion. The wrapper refuses confirm=false and the service refuses non-Task-Atlas-generated tools.

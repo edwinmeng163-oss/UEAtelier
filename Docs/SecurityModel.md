@@ -21,6 +21,15 @@ Recommended policy categories:
 - Dynamic execution: Python and console command execution.
 - Local Task Atlas writes: ActivityLog annotation, task rating, and task pinning
   mutate only ignored `Saved/UnrealMcp` JSON/JSONL state.
+- Local RAG writes: knowledge refresh, isolated eval refresh, and verified
+  outcome-card append are confined to the current project's `Saved` directory.
+  `sourceRoot` and `indexRoot` reject absolute/traversing paths outside that
+  boundary; eval JSON reads are limited to the current project or the shared
+  `Tools/UnrealMcpKnowledge/Evals` root. Recursive scanners skip symlinks and
+  reparse points; manifest `textPath`, fixed index leaves, and card-source
+  metadata probes are revalidated immediately before filesystem access.
+  Because `refreshIndex:true` writes an index, `unreal.knowledge_eval_run` is
+  classified as a low-risk write tool.
 
 Each AI-facing tool now carries the same policy object in `tools/list`, `unreal.mcp_tool_audit`, and `unreal.mcp_workbench_status`:
 

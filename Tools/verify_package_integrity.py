@@ -187,6 +187,8 @@ def required_file_paths(mode: str, scope: str) -> List[str]:
         "Plugins/UnrealMcp/Resources/ToolRegistry/schema.json",
         "Tools/UnrealMcpToolRegistry/tools.json",
         "Tools/UnrealMcpToolRegistry/schema.json",
+        "Tools/unreal_mcp_fetch_docs.py",
+        "Tools/install_unrealmcp_to_project.py",
         "Tools/UnrealMcpPyTools/editor_python_runtime_info/main.py",
         "Tools/UnrealMcpPyToolSamples/call_tool_demo/main.py",
         "Tools/UnrealMcpCodexBridge/package.json",

@@ -2,20 +2,20 @@
 
 **Category**: self-extension
 **Title**: Run Knowledge Evals
-**Risk level**: read_only
+**Risk level**: low
 
 Runs the offline RAG retrieval evaluation suite under Tools/UnrealMcpKnowledge/Evals/ and reports recall plus per-question diagnostics.
 
 ## Capabilities
 
-- Requires write: false
+- Requires write: true
 - Requires build: false
 - Requires external process: false
 - Requires restart: false
 - Requires lock: false
 - Dry-run support: false
-- Preflight support: false
-- Postcheck support: false
+- Preflight support: true
+- Postcheck support: true
 - Test coverage: category
 
 ## Input schema
@@ -26,7 +26,11 @@ Runs the offline RAG retrieval evaluation suite under Tools/UnrealMcpKnowledge/E
   "properties": {
     "evalPath": {
       "type": "string",
-      "description": "Project-local eval JSON file or directory. Defaults to Tools/UnrealMcpKnowledge/Evals."
+      "description": "Eval JSON file or directory inside the current project or the shared Tools/UnrealMcpKnowledge/Evals root."
+    },
+    "indexRoot": {
+      "type": "string",
+      "description": "Optional KnowledgeIndex root inside the current project's Saved directory. Use an isolated Saved root for repeatable evals."
     },
     "refreshIndex": {
       "type": "boolean",
@@ -56,7 +60,8 @@ _Provenance: fixture-derived_
 ```json
 {
   "evalPath": "Tools/UnrealMcpKnowledge/Evals",
-  "refreshIndex": false,
+  "indexRoot": "Saved/UnrealMcp/Tests/KnowledgeEval/Index",
+  "refreshIndex": true,
   "includeDetails": false,
   "limit": 6
 }
@@ -64,5 +69,5 @@ _Provenance: fixture-derived_
 
 ## Provenance
 - Source docs: Docs/KnowledgeRag.md
-- Reason: Explicit registry: read-only regression eval runner for RAG search, tool recommendation, gap analysis, and workflow recommendation.
+- Reason: Explicit registry: refreshIndex can replace a bounded project-Saved KnowledgeIndex before running local evals; evalPath is limited to project/shared eval roots.
 - Notes: Reads versioned eval cases from Tools/UnrealMcpKnowledge/Evals by default.

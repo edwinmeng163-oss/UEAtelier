@@ -23,48 +23,54 @@ Turn a Task Atlas task into either a generated preview composite Python user too
 ```json
 {
   "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "taskId"
-  ],
   "properties": {
     "taskId": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "description": "Task Atlas task id to classify and convert."
     },
     "preferDocumentOnly": {
       "type": "boolean",
-      "default": false
+      "default": false,
+      "description": "Dry-run/document-only mode. When true, never writes Tools/UnrealMcpPyTools and writes/returns a markdown draft instead."
     },
     "forceWriteEvenIfBlocked": {
       "type": "boolean",
-      "default": false
+      "default": false,
+      "description": "Developer escape hatch. Still requires AssistantRun approval when invoked by AI; UI must not set this."
     },
     "overrideStepArgs": {
       "type": "array",
+      "description": "Optional strict override bridge for developer tools. Each item carries JSON as a string to keep the MCP schema closed.",
       "items": {
         "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "ordinal",
-          "argumentsJson"
-        ],
         "properties": {
           "ordinal": {
             "type": "integer",
             "minimum": 0
           },
           "toolName": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           },
           "argumentsJson": {
-            "type": "string"
+            "type": "string",
+            "minLength": 2
           }
-        }
+        },
+        "required": [
+          "ordinal",
+          "argumentsJson"
+        ],
+        "additionalProperties": false
       },
       "default": []
     }
-  }
+  },
+  "required": [
+    "taskId"
+  ],
+  "additionalProperties": false
 }
 ```
 
@@ -74,12 +80,11 @@ _Provenance: schema-minimal_
 
 ```json
 {
-  "taskId": "task-20260601"
+  "taskId": "<string>"
 }
 ```
 
 ## Provenance
-
 - Source docs: Docs/TaskAtlas.md
 - Reason: v0.31 Task Atlas Make Tool Set MCP wrapper over TaskAtlasService::MakeComposite.
-- Notes: AssistantRun approval is required for generated PyTools writes and forceWriteEvenIfBlocked=true; preferDocumentOnly=true is the dry-run equivalent.
+- Notes: AssistantRun approval: required for generated PyTools writes and forceWriteEvenIfBlocked=true; preferDocumentOnly=true is the dry-run equivalent.

@@ -26,15 +26,20 @@ Rebuilds the local Saved/UnrealMcp/KnowledgeIndex/ JSONL index from fetched docs
   "properties": {
     "sourceRoot": {
       "type": "string",
-      "description": "Optional root containing fetched knowledge sources. Defaults to Saved/UnrealMcp/KnowledgeSources."
+      "description": "Optional project-Saved root containing fetched knowledge sources. Must remain inside the current project's Saved directory; defaults to Saved/UnrealMcp/KnowledgeSources."
     },
     "indexRoot": {
       "type": "string",
-      "description": "Optional output directory for the generated KnowledgeCard index. Defaults to Saved/UnrealMcp/KnowledgeIndex."
+      "description": "Optional project-Saved output directory for the generated KnowledgeCard index. Must remain inside the current project's Saved directory; defaults to Saved/UnrealMcp/KnowledgeIndex."
     },
     "includeOfficialDocs": {
       "type": "boolean",
       "description": "Include fetched official documentation documents.jsonl files.",
+      "default": true
+    },
+    "includePromotedSources": {
+      "type": "boolean",
+      "description": "Include promoted local markdown sources such as Task Atlas RAG cards independently of official docs.",
       "default": true
     },
     "includeVersionedDocs": {
@@ -46,6 +51,21 @@ Rebuilds the local Saved/UnrealMcp/KnowledgeIndex/ JSONL index from fetched docs
       "type": "boolean",
       "description": "Include visible ToolRegistry entries as searchable tool cards.",
       "default": true
+    },
+    "includeActivityLog": {
+      "type": "boolean",
+      "description": "Include local activity-log summary cards. Disabled by default because logs can contain project-specific context.",
+      "default": false
+    },
+    "includeSkills": {
+      "type": "boolean",
+      "description": "Include promoted project skills as searchable cards.",
+      "default": true
+    },
+    "allowEmptyIndex": {
+      "type": "boolean",
+      "description": "Allow an explicitly empty index only when indexRoot is explicitly under Saved/UnrealMcp/Tests. By default, an empty refresh preserves the last-known-good index.",
+      "default": false
     },
     "skipLowContent": {
       "type": "boolean",
@@ -85,8 +105,13 @@ _Provenance: fixture-derived_
 ```json
 {
   "includeOfficialDocs": false,
+  "includePromotedSources": false,
   "includeVersionedDocs": true,
   "includeToolRegistry": true,
+  "includeActivityLog": false,
+  "includeSkills": true,
+  "allowEmptyIndex": false,
+  "indexRoot": "Saved/UnrealMcp/Tests/SelfExtensionKnowledge/Index",
   "maxCards": 60,
   "maxChunkChars": 1200,
   "chunkOverlapChars": 80

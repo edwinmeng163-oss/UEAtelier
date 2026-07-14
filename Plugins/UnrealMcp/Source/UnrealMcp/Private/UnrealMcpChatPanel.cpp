@@ -25,6 +25,7 @@
 #include "Serialization/JsonWriter.h"
 #include "Styling/AppStyle.h"
 #include "STaskAtlasWindow.h"
+#include "UnrealMcpEngineCompat.h"
 #include "UnrealMcpModule.h"
 #include "UnrealMcpSettings.h"
 #include "UnrealMcpToolRegistry.h"
@@ -633,7 +634,7 @@ namespace UnrealMcpChat
 
 		for (int32 Index = 0; Index < Fields.Num(); ++Index)
 		{
-			const TSharedPtr<FJsonValue>* ValuePtr = CurrentObject->Values.Find(Fields[Index]);
+			const TSharedPtr<FJsonValue>* ValuePtr = UnrealMcp::Compat::FindJsonValue(*CurrentObject, Fields[Index]);
 			if (!ValuePtr || !ValuePtr->IsValid())
 			{
 				return false;
@@ -4498,20 +4499,49 @@ FString SUnrealMcpChatPanel::BuildRagContextBlock(const FString& CurrentUserProm
 	};
 
 	FUnrealMcpExecutionResult RecommendResult = RunToolRecommend();
+	auto HasUnusableIndexStatus = [](const FUnrealMcpExecutionResult& Result)
+	{
+		if (Result.bIsError || !Result.StructuredContent.IsValid())
+		{
+			return true;
+		}
+		FString IndexStatus;
+		Result.StructuredContent->TryGetStringField(TEXT("indexStatus"), IndexStatus);
+		return IndexStatus.Equals(TEXT("missing"), ESearchCase::CaseSensitive)
+			|| IndexStatus.Equals(TEXT("empty"), ESearchCase::CaseSensitive)
+			|| IndexStatus.Equals(TEXT("stale"), ESearchCase::CaseSensitive)
+			|| IndexStatus.Equals(TEXT("corrupt"), ESearchCase::CaseSensitive);
+	};
 	if (RecommendResult.StructuredContent.IsValid())
 	{
-		FString KnowledgeNote;
-		if (RecommendResult.StructuredContent->TryGetStringField(TEXT("knowledgeNote"), KnowledgeNote)
-			&& KnowledgeNote.Contains(TEXT("Knowledge index not found"), ESearchCase::IgnoreCase))
+		FString IndexStatus;
+		RecommendResult.StructuredContent->TryGetStringField(TEXT("indexStatus"), IndexStatus);
+		const bool bNeedsIndexRefresh =
+			IndexStatus.Equals(TEXT("missing"), ESearchCase::CaseSensitive)
+			|| IndexStatus.Equals(TEXT("empty"), ESearchCase::CaseSensitive)
+			|| IndexStatus.Equals(TEXT("stale"), ESearchCase::CaseSensitive)
+			|| IndexStatus.Equals(TEXT("corrupt"), ESearchCase::CaseSensitive);
+		if (bNeedsIndexRefresh && !bRagAutoRefreshFailedThisSession)
 		{
 			TSharedPtr<FJsonObject> RefreshArguments = MakeShared<FJsonObject>();
 			RefreshArguments->SetBoolField(TEXT("includeOfficialDocs"), true);
+			RefreshArguments->SetBoolField(TEXT("includePromotedSources"), true);
 			RefreshArguments->SetBoolField(TEXT("includeVersionedDocs"), true);
 			RefreshArguments->SetBoolField(TEXT("includeToolRegistry"), true);
+			RefreshArguments->SetBoolField(TEXT("includeActivityLog"), false);
+			RefreshArguments->SetBoolField(TEXT("includeSkills"), true);
 			RefreshArguments->SetBoolField(TEXT("skipLowContent"), true);
 			RefreshArguments->SetNumberField(TEXT("maxCards"), 2000.0);
-			OwnerModule->ExecuteToolFromEditorUI(TEXT("unreal.knowledge_index_refresh"), *RefreshArguments);
-			RecommendResult = RunToolRecommend();
+			const FUnrealMcpExecutionResult RefreshResult = OwnerModule->ExecuteToolFromEditorUI(TEXT("unreal.knowledge_index_refresh"), *RefreshArguments);
+			if (RefreshResult.bIsError)
+			{
+				bRagAutoRefreshFailedThisSession = true;
+			}
+			else
+			{
+				RecommendResult = RunToolRecommend();
+				bRagAutoRefreshFailedThisSession = HasUnusableIndexStatus(RecommendResult);
+			}
 		}
 	}
 

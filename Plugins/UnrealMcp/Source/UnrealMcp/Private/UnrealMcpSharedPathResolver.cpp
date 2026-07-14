@@ -2,14 +2,31 @@
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "GenericPlatform/GenericPlatformFile.h"
 #include "HAL/FileManager.h"
+#include "HAL/PlatformFileManager.h"
 #include "Interfaces/IPluginManager.h"
 #include "Misc/Paths.h"
+
+#if PLATFORM_MAC || PLATFORM_LINUX
+#include <sys/stat.h>
+#endif
 
 namespace UnrealMcp
 {
 	namespace
 	{
+		bool SharedPathIsSymlink(const FString& Path)
+		{
+#if PLATFORM_MAC || PLATFORM_LINUX
+			struct stat PathStat = {};
+			FTCHARToUTF8 Converter(*Path);
+			return lstat(Converter.Get(), &PathStat) == 0 && S_ISLNK(PathStat.st_mode);
+#else
+			return FPlatformFileManager::Get().GetPlatformFile().IsSymlink(*Path) == ESymlinkResult::Symlink;
+#endif
+		}
+
 		FString NormalizeSharedPath(const FString& Path)
 		{
 			FString FullPath = FPaths::ConvertRelativePathToFull(Path);
@@ -169,6 +186,10 @@ namespace UnrealMcp
 	{
 		if (FPaths::FileExists(Root))
 		{
+			if (SharedPathIsSymlink(Root))
+			{
+				return false;
+			}
 			if (RequiredRecursivePatterns.Num() == 0)
 			{
 				return true;
@@ -189,16 +210,48 @@ namespace UnrealMcp
 		{
 			return false;
 		}
+		if (SharedPathIsSymlink(Root))
+		{
+			return false;
+		}
 		if (RequiredRecursivePatterns.Num() == 0)
 		{
 			return true;
 		}
 
-		for (const FString& Pattern : RequiredRecursivePatterns)
+		IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+		TArray<FString> PendingDirectories;
+		PendingDirectories.Add(Root);
+		while (!PendingDirectories.IsEmpty())
 		{
-			TArray<FString> Matches;
-			IFileManager::Get().FindFilesRecursive(Matches, *Root, *Pattern, true, false);
-			if (Matches.Num() > 0)
+			const FString CurrentDirectory = PendingDirectories.Pop();
+			bool bFoundMatch = false;
+			PlatformFile.IterateDirectory(
+				*CurrentDirectory,
+				[&](const TCHAR* FilenameOrDirectory, bool bIsDirectory)
+				{
+					const FString EntryPath = NormalizeSharedPath(FilenameOrDirectory);
+					if (SharedPathIsSymlink(EntryPath))
+					{
+						return true;
+					}
+					if (bIsDirectory)
+					{
+						PendingDirectories.Add(EntryPath);
+						return true;
+					}
+					const FString FileName = FPaths::GetCleanFilename(EntryPath);
+					for (const FString& Pattern : RequiredRecursivePatterns)
+					{
+						if (FileName.MatchesWildcard(Pattern, ESearchCase::IgnoreCase))
+						{
+							bFoundMatch = true;
+							return false;
+						}
+					}
+					return true;
+				});
+			if (bFoundMatch)
 			{
 				return true;
 			}

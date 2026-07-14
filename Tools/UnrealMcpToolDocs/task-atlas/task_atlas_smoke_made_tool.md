@@ -23,25 +23,28 @@ Run or preview a smoke test for a generated composite user tool and record failu
 ```json
 {
   "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "toolName"
-  ],
   "properties": {
     "toolName": {
       "type": "string",
       "minLength": 6,
-      "pattern": "^user\\.[A-Za-z0-9_]+$"
+      "pattern": "^user\\.[A-Za-z0-9_]+$",
+      "description": "Generated composite user tool to smoke."
     },
     "dryRun": {
       "type": "boolean",
-      "default": true
+      "default": true,
+      "description": "When true, validate presence and show smoke args without executing the user tool."
     },
     "acceptChangedHashes": {
       "type": "boolean",
-      "default": false
+      "default": false,
+      "description": "Forwarded to user registry reload only when a real pre-smoke reload is required. Default must remain false."
     }
-  }
+  },
+  "required": [
+    "toolName"
+  ],
+  "additionalProperties": false
 }
 ```
 
@@ -51,13 +54,11 @@ _Provenance: schema-minimal_
 
 ```json
 {
-  "toolName": "user.task_atlas_slug",
-  "dryRun": true
+  "toolName": "actor-name"
 }
 ```
 
 ## Provenance
-
 - Source docs: Docs/TaskAtlas.md
 - Reason: v0.31 Task Atlas generated composite smoke wrapper over TaskAtlasService::SmokeMadeTool.
-- Notes: AssistantRun approval is required for dryRun=false because real smoke can execute user Python and can update generated failure markers.
+- Notes: AssistantRun approval: required for dryRun=false because real smoke can execute user Python and can update generated failure markers.

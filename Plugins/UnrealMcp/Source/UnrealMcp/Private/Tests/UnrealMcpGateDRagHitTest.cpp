@@ -12,18 +12,29 @@
 namespace UnrealMcpGateDRagHitTest
 {
 	const FString GateDSentinel = TEXT("UEVOLVE_GATE_D_SENTINEL_TASK_ATLAS_SMOKE");
-
-	FString GateDGetKnowledgeSourcePath()
+	FString GateDGetTestRoot()
 	{
 		return FPaths::ConvertRelativePathToFull(FPaths::Combine(
 			FPaths::ProjectSavedDir(),
-			TEXT("UnrealMcp/KnowledgeSources/TaskAtlas/gate_d_smoke.md")));
+			TEXT("UnrealMcp/Tests/GateD/RagHit")));
+	}
+
+	FString GateDGetKnowledgeSourcePath()
+	{
+		return FPaths::Combine(GateDGetTestRoot(), TEXT("KnowledgeSources/TaskAtlas/gate_d_smoke.md"));
+	}
+
+	FString GateDGetKnowledgeIndexRoot()
+	{
+		return FPaths::Combine(GateDGetTestRoot(), TEXT("KnowledgeIndex"));
 	}
 
 	void GateDConfigureRefreshArgs(FJsonObject& Args)
 	{
 		Args.SetStringField(TEXT("sourceRoot"), FPaths::GetPath(GateDGetKnowledgeSourcePath()));
-		Args.SetBoolField(TEXT("includeOfficialDocs"), true);
+		Args.SetStringField(TEXT("indexRoot"), GateDGetKnowledgeIndexRoot());
+		Args.SetBoolField(TEXT("includeOfficialDocs"), false);
+		Args.SetBoolField(TEXT("includePromotedSources"), true);
 		Args.SetBoolField(TEXT("includeVersionedDocs"), false);
 		Args.SetBoolField(TEXT("includeToolRegistry"), false);
 		Args.SetBoolField(TEXT("includeActivityLog"), false);
@@ -94,8 +105,7 @@ bool FUnrealMcpGateDRagHitTest::RunTest(const FString& Parameters)
 	const FString SourcePath = UnrealMcpGateDRagHitTest::GateDGetKnowledgeSourcePath();
 	ON_SCOPE_EXIT
 	{
-		IFileManager::Get().Delete(*SourcePath, false, true, true);
-		UnrealMcpGateDRagHitTest::GateDRefreshIndex();
+		IFileManager::Get().DeleteDirectory(*UnrealMcpGateDRagHitTest::GateDGetTestRoot(), false, true);
 	};
 
 	IFileManager::Get().MakeDirectory(*FPaths::GetPath(SourcePath), true);
@@ -118,10 +128,17 @@ bool FUnrealMcpGateDRagHitTest::RunTest(const FString& Parameters)
 	RecommendArgs.SetBoolField(TEXT("includeKnowledge"), true);
 	RecommendArgs.SetBoolField(TEXT("includeWorkflowDraft"), false);
 	RecommendArgs.SetNumberField(TEXT("limit"), 5.0);
+	RecommendArgs.SetStringField(TEXT("indexRoot"), UnrealMcpGateDRagHitTest::GateDGetKnowledgeIndexRoot());
 
 	TArray<TSharedPtr<FJsonValue>> EmptyTools;
 	const FUnrealMcpExecutionResult RecommendResult = UnrealMcp::ToolRecommend(RecommendArgs, EmptyTools);
 	TestFalse(TEXT("ToolRecommend succeeds in-process."), RecommendResult.bIsError);
+	FString IndexStatus;
+	if (RecommendResult.StructuredContent.IsValid())
+	{
+		RecommendResult.StructuredContent->TryGetStringField(TEXT("indexStatus"), IndexStatus);
+	}
+	TestEqual(TEXT("ToolRecommend uses the isolated ready index."), IndexStatus, FString(TEXT("ready")));
 	TestTrue(
 		TEXT("ToolRecommend includes the synthetic Task Atlas KnowledgeCard."),
 		UnrealMcpGateDRagHitTest::GateDResultContainsSentinel(RecommendResult));

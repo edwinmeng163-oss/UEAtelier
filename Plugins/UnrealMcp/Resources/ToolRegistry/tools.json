@@ -1839,15 +1839,20 @@
         "properties": {
           "sourceRoot": {
             "type": "string",
-            "description": "Optional root containing fetched knowledge sources. Defaults to Saved/UnrealMcp/KnowledgeSources."
+            "description": "Optional project-Saved root containing fetched knowledge sources. Must remain inside the current project's Saved directory; defaults to Saved/UnrealMcp/KnowledgeSources."
           },
           "indexRoot": {
             "type": "string",
-            "description": "Optional output directory for the generated KnowledgeCard index. Defaults to Saved/UnrealMcp/KnowledgeIndex."
+            "description": "Optional project-Saved output directory for the generated KnowledgeCard index. Must remain inside the current project's Saved directory; defaults to Saved/UnrealMcp/KnowledgeIndex."
           },
           "includeOfficialDocs": {
             "type": "boolean",
             "description": "Include fetched official documentation documents.jsonl files.",
+            "default": true
+          },
+          "includePromotedSources": {
+            "type": "boolean",
+            "description": "Include promoted local markdown sources such as Task Atlas RAG cards independently of official docs.",
             "default": true
           },
           "includeVersionedDocs": {
@@ -1859,6 +1864,21 @@
             "type": "boolean",
             "description": "Include visible ToolRegistry entries as searchable tool cards.",
             "default": true
+          },
+          "includeActivityLog": {
+            "type": "boolean",
+            "description": "Include local activity-log summary cards. Disabled by default because logs can contain project-specific context.",
+            "default": false
+          },
+          "includeSkills": {
+            "type": "boolean",
+            "description": "Include promoted project skills as searchable cards.",
+            "default": true
+          },
+          "allowEmptyIndex": {
+            "type": "boolean",
+            "description": "Allow an explicitly empty index only when indexRoot is explicitly under Saved/UnrealMcp/Tests. By default, an empty refresh preserves the last-known-good index.",
+            "default": false
           },
           "skipLowContent": {
             "type": "boolean",
@@ -1926,9 +1946,31 @@
               "type": "string"
             }
           },
+          "sourceKinds": {
+            "type": "array",
+            "description": "Optional sourceKind values to include.",
+            "items": {
+              "type": "string",
+              "enum": [
+                "tool-registry",
+                "versioned-doc",
+                "official-docs",
+                "skill",
+                "runtime-memory",
+                "activity-log",
+                "test-fixture",
+                "unknown"
+              ]
+            }
+          },
+          "groupByKind": {
+            "type": "boolean",
+            "description": "Group results by sourceKind instead of returning one flat results array.",
+            "default": false
+          },
           "indexRoot": {
             "type": "string",
-            "description": "Optional index directory. Defaults to Saved/UnrealMcp/KnowledgeIndex."
+            "description": "Optional index directory inside the current project's Saved directory. Defaults to Saved/UnrealMcp/KnowledgeIndex."
           },
           "limit": {
             "type": "number",
@@ -1978,6 +2020,10 @@
           "task": {
             "type": "string",
             "description": "Natural-language task to map to existing tools and workflows."
+          },
+          "indexRoot": {
+            "type": "string",
+            "description": "Optional knowledge index directory inside the current project's Saved directory for test isolation. Defaults to Saved/UnrealMcp/KnowledgeIndex."
           },
           "riskMax": {
             "type": "string",
@@ -2109,27 +2155,31 @@
       "title": "Run Knowledge Evals",
       "description": "Runs the offline RAG retrieval evaluation suite under Tools/UnrealMcpKnowledge/Evals/ and reports recall plus per-question diagnostics.",
       "exposure": "visible",
-      "riskLevel": "read_only",
-      "requiresWrite": false,
+      "riskLevel": "low",
+      "requiresWrite": true,
       "requiresBuild": false,
       "requiresExternalProcess": false,
       "requiresRestart": false,
       "requiresProjectMemory": false,
       "requiresLock": false,
       "dryRunSupport": false,
-      "preflightSupport": false,
-      "postcheckSupport": false,
+      "preflightSupport": true,
+      "postcheckSupport": true,
       "testCoverage": "category",
       "owner": "UEAtelier Core",
       "docsPath": "Docs/KnowledgeRag.md",
-      "reason": "Explicit registry: read-only regression eval runner for RAG search, tool recommendation, gap analysis, and workflow recommendation.",
+      "reason": "Explicit registry: refreshIndex can replace a bounded project-Saved KnowledgeIndex before running local evals; evalPath is limited to project/shared eval roots.",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
           "evalPath": {
             "type": "string",
-            "description": "Project-local eval JSON file or directory. Defaults to Tools/UnrealMcpKnowledge/Evals."
+            "description": "Eval JSON file or directory inside the current project or the shared Tools/UnrealMcpKnowledge/Evals root."
+          },
+          "indexRoot": {
+            "type": "string",
+            "description": "Optional KnowledgeIndex root inside the current project's Saved directory. Use an isolated Saved root for repeatable evals."
           },
           "refreshIndex": {
             "type": "boolean",
@@ -10940,7 +10990,7 @@
       "category": "editor",
       "handlerName": "unreal.project_version_migration",
       "title": "Project Version Migration",
-      "description": "Updates a .uproject EngineAssociation between UE 5.6 and UE 5.7 and reports remaining manual rebuild steps.",
+      "description": "Updates a .uproject EngineAssociation across UE 5.6, UE 5.7, and UE 5.8, reports the support tier, and lists remaining manual rebuild steps.",
       "exposure": "visible",
       "riskLevel": "high",
       "requiresWrite": true,
@@ -10955,14 +11005,19 @@
       "testCoverage": "core",
       "owner": "UEAtelier Core",
       "docsPath": "README.md#tool-coverage",
-      "reason": "v0.15 chunk 5 migration tool: reversible .uproject EngineAssociation edit between UE 5.6 and UE 5.7.",
+      "reason": "v0.35 support-contract update: reversible .uproject EngineAssociation edits for primary UE 5.7/5.8 and maintenance UE 5.6.",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
           "targetEngineVersion": {
             "type": "string",
-            "description": "Target EngineAssociation value. Supported values: 5.6 or 5.7."
+            "description": "Target EngineAssociation value. UE 5.7 and 5.8 are primary; UE 5.6 is maintenance.",
+            "enum": [
+              "5.6",
+              "5.7",
+              "5.8"
+            ]
           },
           "dryRun": {
             "type": "boolean",
@@ -10978,7 +11033,7 @@
           "targetEngineVersion"
         ]
       },
-      "notes": "PIE-blocked. Default dryRun=true. Does not cook, regenerate project files, run UnrealVersionSelector, or rebuild binaries."
+      "notes": "PIE-blocked. Default dryRun=true. Returns targetSupportTier=primary for UE 5.7/5.8 and maintenance for UE 5.6. Does not cook, regenerate project files, run UnrealVersionSelector, or rebuild binaries."
     },
     {
       "name": "unreal.activity_log_annotate",

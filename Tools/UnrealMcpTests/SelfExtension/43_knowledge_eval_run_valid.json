@@ -17,7 +17,8 @@
       "name": "unreal.knowledge_eval_run",
       "arguments": {
         "evalPath": "Tools/UnrealMcpKnowledge/Evals",
-        "refreshIndex": false,
+        "indexRoot": "Saved/UnrealMcp/Tests/KnowledgeEval/Index",
+        "refreshIndex": true,
         "includeDetails": false,
         "limit": 6
       }

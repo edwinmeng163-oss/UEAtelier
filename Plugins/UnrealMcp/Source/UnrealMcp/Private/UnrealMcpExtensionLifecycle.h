@@ -64,7 +64,7 @@ namespace UnrealMcp::Extension
 
 	enum class EExtensionScope : uint8
 	{
-		Core,   // built-in plugin tools; canonical 160 + 2 v0.26 control tools = 162
+		Core,   // built-in plugin tools from the canonical core registry
 		User,   // project-local Python user tools under <projDir>/Tools/UnrealMcpPyTools/
 	};
 
@@ -105,7 +105,7 @@ namespace UnrealMcp::Extension
 	// this enum is the per-tool reporting field used in lifecycle.sourceKind.
 	enum class ESourceKind : uint8
 	{
-		CoreRegistry,         // canonical tools.json (160 + 2 = 162) with valid handler
+		CoreRegistry,         // canonical tools.json entry with a valid handler
 		UserRegistry,         // user overlay registry (project-local Tools/UnrealMcpPyTools/)
 		DescriptorOnly,       // tools/list descriptor present but no registry entry
 		HandlerOnly,          // handler registered but no tools.json entry

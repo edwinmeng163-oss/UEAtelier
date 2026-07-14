@@ -25,8 +25,8 @@ python3 Tools/verify_package_integrity.py --root <staged-package-root> --mode so
 python3 Tools/verify_package_integrity.py --zip <package.zip> --mode source --strict --repo-root .
 ```
 
-Use `--mode source` for the current v0.32.2 macOS and Windows source-only
-projectroot packages. The verifier
+Use `--mode source` for macOS and Windows source-only projectroot packages,
+including the v0.35 development candidates. The verifier
 checks registry/schema mirror equality, package-only generated path exclusions,
 install and first-launch docs, and the Windows git-symlink-stub failure mode
 that can turn schema aliases into tiny path files instead of real JSON. See

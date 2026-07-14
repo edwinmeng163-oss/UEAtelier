@@ -73,6 +73,13 @@ FORBIDDEN_PATTERNS: list[dict[str, Any]] = [
         "severity": "warning",
         "suppress_when_guarded": True,
     },
+    {
+        "pattern": r"\bValues\s*\.\s*(?:Find|GetKeys)\s*\(",
+        "reason": "FJsonObject::Values lookup/enumeration changed in UE 5.8. Use UnrealMcp::Compat::FindJsonValue/GetJsonObjectKeys outside the compatibility header.",
+        "added_in": "5.8",
+        "severity": "error",
+        "allow_in_engine_compat_header": True,
+    },
 ]
 
 
@@ -148,7 +155,11 @@ def scan_file(path: Path, pattern_entry: dict[str, Any]) -> list[Finding]:
     added_in = pattern_entry["added_in"]
     severity = pattern_entry["severity"]
     suppress_when_guarded = bool(pattern_entry.get("suppress_when_guarded", False))
+    allow_in_engine_compat_header = bool(pattern_entry.get("allow_in_engine_compat_header", False))
     findings: list[Finding] = []
+
+    if allow_in_engine_compat_header and path == ENGINE_COMPAT_HEADER:
+        return findings
 
     added_major, added_minor = parse_engine_version(added_in)
 

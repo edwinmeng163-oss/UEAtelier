@@ -17,6 +17,12 @@
       "name": "unreal.knowledge_search",
       "arguments": {
         "query": "self extension tool registry",
+        "sourceKinds": [
+          "versioned-doc",
+          "tool-registry"
+        ],
+        "groupByKind": false,
+        "indexRoot": "Saved/UnrealMcp/Tests/SelfExtensionKnowledge/Index",
         "limit": 5,
         "maxExcerptChars": 240
       }

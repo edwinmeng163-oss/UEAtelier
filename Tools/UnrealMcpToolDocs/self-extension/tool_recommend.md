@@ -28,6 +28,10 @@ Given a task description, returns ranked tool suggestions from the local registr
       "type": "string",
       "description": "Natural-language task to map to existing tools and workflows."
     },
+    "indexRoot": {
+      "type": "string",
+      "description": "Optional knowledge index directory inside the current project's Saved directory for test isolation. Defaults to Saved/UnrealMcp/KnowledgeIndex."
+    },
     "riskMax": {
       "type": "string",
       "description": "Maximum risk to recommend: read_only, low, medium, high, or critical.",
@@ -61,6 +65,7 @@ _Provenance: fixture-derived_
 ```json
 {
   "task": "Create a Widget HUD and verify it with existing tools",
+  "indexRoot": "Saved/UnrealMcp/Tests/SelfExtensionKnowledge/Index",
   "riskMax": "medium",
   "limit": 6,
   "includeKnowledge": true,

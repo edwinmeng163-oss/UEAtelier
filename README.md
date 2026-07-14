@@ -17,15 +17,17 @@ for project structure, current self-extension workflow, RAG/tooling context,
 safe edit rules, and the requirement to update `AGENTS.md` plus this `README.md`
 after meaningful changes.
 
-This repository is an Unreal Engine 5.6 / 5.7 editor-tooling workbench focused on editor automation, AI-assisted project inspection, core Blueprint/gameplay authoring, UMG setup, runtime verification, and local Model Context Protocol workflows.
+This repository is an Unreal Engine 5.7 / 5.8 editor-tooling workbench focused on editor automation, AI-assisted project inspection, core Blueprint/gameplay authoring, UMG setup, runtime verification, and local Model Context Protocol workflows. UE 5.6 remains a maintenance compile canary during the v0.35 transition.
 
-Its main deliverable is the **Unreal MCP** editor plugin under `Plugins/UnrealMcp`. The plugin exposes Unreal Editor operations through a localhost MCP endpoint and an in-editor chat panel. The repository root includes `UEvolve.uproject` (UE 5.6) as the default local development host. Two optional sample-content hosts ship alongside it: `Examples/UEvolveExample/UEvolveExample.uproject` for UE 5.6.1 and `Examples/UEvolveExample57/UEvolveExample57.uproject` for UE 5.7.4 — open the one that matches the engine you have installed.
+Its main deliverable is the **Unreal MCP** editor plugin under `Plugins/UnrealMcp`. The plugin exposes Unreal Editor operations through a localhost MCP endpoint and an in-editor chat panel. The repository root includes `UEvolve.uproject` (UE 5.7) as the default local development host. `Examples/UEvolveExample57/UEvolveExample57.uproject` (UE 5.7.4) is the primary sample-content host and is reused for UE 5.8 validation; `Examples/UEvolveExample/UEvolveExample.uproject` remains the UE 5.6.1 maintenance canary.
 
 > 📘 **New here?** Start with [`Docs/Release-2026-07.md`](Docs/Release-2026-07.md) — trilingual v0.34.0 notes plus the setup pointer chain for macOS, Linux, and Windows, including the multi-provider AI configuration (OpenAI / Kimi / GLM / DeepSeek / Qwen / Ollama / Anthropic Claude / Codex) and the Codex Desktop bridge.
 
+> 🚧 **v0.35.0 is in development.** UE 5.7 and 5.8 are the primary targets; UE 5.6 is maintenance-only. The latest public release remains v0.34.0.
+
 ## English Overview
 
-UEAtelier is an Unreal Editor 5.6 / 5.7 MCP self-extension workbench.
+UEAtelier is an Unreal Editor 5.7 / 5.8 MCP self-extension workbench. UE 5.6 remains a maintenance compile canary.
 
 It is more than a plain wrapper that lets AI call Unreal Editor tools.
 UEAtelier productizes the act of adding new MCP capabilities under safety rails:
@@ -33,6 +35,8 @@ audit, dry run, backup manifest, UBT compile, fixture suite, rollback, project
 memory, and supervisor recovery.
 
 Latest release: **[v0.34.0 — Make-Tool-Set vetting foundation + bridge MCP reachability fix](https://github.com/edwinmeng163-oss/UEAtelier/releases/tag/v0.34.0)** (public, source-only projectroot zips, ~1 MiB each). Release notes: [`Docs/Release-2026-07.md`](Docs/Release-2026-07.md). Mac and Windows zips are both attached; the same source compiles cleanly on UE 5.6 and UE 5.7. Extract the projectroot zip next to your `<YourProject>.uproject` (NOT under `Plugins/`); UBT compiles on first editor launch or explicit editor-target build.
+
+Current development line: **v0.35.0** prioritizes UE 5.7 and UE 5.8. The root host targets 5.7, `Examples/UEvolveExample57` is reused for 5.8 validation, and the latest public release remains v0.34.0.
 
 Current core capabilities:
 
@@ -48,8 +52,8 @@ Current core capabilities:
 - Multi-provider chat through OpenAI Responses, OpenAI Chat Compat for Kimi/GLM/DeepSeek/Qwen/Ollama, Anthropic Claude, Codex CLI, and the Codex Desktop bridge.
 - Developer-only core extension pipeline: descriptor-first scaffolds, patch validation, apply with backup manifest, UBT build, fixture test, and rollback to manifest.
 - Tool export/import packages for cross-developer transfer through `Saved/UnrealMcp/Packages/*.zip`.
-- Local RAG with a Knowledge index and Knowledge cards under `Saved/UnrealMcp/KnowledgeIndex/`.
-- Multi-engine and cross-platform discipline for UE 5.6.1 and UE 5.7.4 on macOS and Windows.
+- Local RAG with KnowledgeIndex v2 staged, verified, recoverable last-known-good writes, machine-readable `missing|empty|stale|ready|corrupt` status, ActivityLog indexing off by default, version-aware/diversity-aware ranking, rank-aware evals, separate UE 5.7 / 5.8 official-source manifests, and a metadata-checked warm cache that skips full recovery/hash/JSONL parsing until either pair file changes.
+- Multi-engine and cross-platform discipline with UE 5.7 and UE 5.8 as primary targets and UE 5.6 as a maintenance compile canary on macOS and Windows.
 
 For a quick start, read `Docs/Release-2026-07.md`, then `AGENTS.md`, then the
 Deployment section later in this README.
@@ -66,7 +70,7 @@ Contribute: pick a template under [.github/ISSUE_TEMPLATE/](.github/ISSUE_TEMPLA
 [![Release-package CI](https://github.com/edwinmeng163-oss/UEAtelier/actions/workflows/win-release-package.yml/badge.svg)](https://github.com/edwinmeng163-oss/UEAtelier/actions/workflows/win-release-package.yml)
 [![Listed on CLI-Anything Hub](https://img.shields.io/badge/listed%20on-CLI--Anything%20Hub-blue)](https://github.com/HKUDS/CLI-Anything/blob/main/registry.json)
 
-UEAtelier 是一个面向 Unreal Editor 5.6 / 5.7 的 MCP 自扩展工作台。
+UEAtelier 是一个面向 Unreal Editor 5.7 / 5.8 的 MCP 自扩展工作台。UE 5.6 在过渡期仅作为维护性编译 canary。
 
 它不只是让 AI 调用 Unreal Editor 工具的普通 wrapper。
 UEAtelier 试图把“新增 MCP 能力”本身产品化，并用安全护栏保护这件事：
@@ -74,6 +78,8 @@ audit、dry run、备份 manifest、UBT 编译、fixture 测试套件、rollback
 project memory 和 supervisor 恢复链路。
 
 最新 release：**[v0.34.0 — Make-Tool-Set vetting foundation + bridge MCP reachability fix](https://github.com/edwinmeng163-oss/UEAtelier/releases/tag/v0.34.0)**（公开、source-only projectroot zip、各约 1 MiB）。Release notes：[`Docs/Release-2026-07.md`](Docs/Release-2026-07.md)。Mac 和 Windows zip 都已上传；同一份 source 在 UE 5.6 和 UE 5.7 上都能干净编译。把 projectroot zip 解压到 `<YourProject>.uproject` 同级目录（不要解到 `Plugins/` 下），UBT 会在首次启动编辑器或显式构建 editor target 时编译插件。
+
+当前开发线：**v0.35.0（开发中）** 优先支持 UE 5.7 和 UE 5.8。根项目主机指向 5.7，`Examples/UEvolveExample57` 复用于 5.8 验证，最新公开 release 仍为 v0.34.0。
 
 当前核心能力：
 
@@ -89,8 +95,8 @@ project memory 和 supervisor 恢复链路。
 - 多 provider Chat：OpenAI Responses、OpenAI Chat Compat for Kimi/GLM/DeepSeek/Qwen/Ollama、Anthropic Claude、Codex CLI 和 Codex Desktop bridge。
 - developer-only core extension pipeline：descriptor-first scaffold、patch validation、带备份 manifest 的 apply、UBT build、fixture test，以及 rollback to manifest。
 - 通过 `Saved/UnrealMcp/Packages/*.zip` 导出/导入工具包，支持跨开发者传递。
-- 本地 RAG：Knowledge index 和 Knowledge cards 位于 `Saved/UnrealMcp/KnowledgeIndex/`。
-- 面向 UE 5.6.1 与 UE 5.7.4、macOS 与 Windows 的多引擎和跨平台兼容纪律。
+- 本地 RAG：KnowledgeIndex v2 提供分阶段、校验并可恢复的 last-known-good 写入、`missing|empty|stale|ready|corrupt` 机器可读状态；ActivityLog 默认不索引，并支持版本/来源多样性排名、rank-aware eval、分离的 UE 5.7 / 5.8 官方源 manifest，以及按 pair 元数据校验的暖缓存；两份索引文件未变化时跳过完整恢复、hash 与 JSONL 解析，发生变化后仍执行完整校验。
+- 多引擎和跨平台兼容纪律以 UE 5.7 和 UE 5.8 为主要目标，UE 5.6 仅作为 macOS 与 Windows 的维护性编译 canary。
 
 快速开始请先阅读 `Docs/Release-2026-07.md`，再读 `AGENTS.md`，然后参考本
 README 后面的 Deployment 部分。
@@ -107,7 +113,7 @@ Demo 库：见 [Demo/README.md](Demo/README.md)。
 [![Release-package CI](https://github.com/edwinmeng163-oss/UEAtelier/actions/workflows/win-release-package.yml/badge.svg)](https://github.com/edwinmeng163-oss/UEAtelier/actions/workflows/win-release-package.yml)
 [![Listed on CLI-Anything Hub](https://img.shields.io/badge/listed%20on-CLI--Anything%20Hub-blue)](https://github.com/HKUDS/CLI-Anything/blob/main/registry.json)
 
-UEAtelier は Unreal Editor 5.6 / 5.7 向けの MCP self-extension workbench です。
+UEAtelier は Unreal Editor 5.7 / 5.8 向けの MCP self-extension workbench です。UE 5.6 は移行中の maintenance compile canary としてのみ維持します。
 
 これは AI に Unreal Editor tools を呼び出させるだけの plain wrapper ではありません。
 UEAtelier は新しい MCP capabilities を追加する行為そのものを製品化し、
@@ -115,6 +121,8 @@ audit、dry run、backup manifest、UBT compile、fixture suite、rollback、
 project memory、supervisor recovery という安全レールの下で扱います。
 
 最新リリース: **[v0.34.0 — Make-Tool-Set vetting foundation + bridge MCP reachability fix](https://github.com/edwinmeng163-oss/UEAtelier/releases/tag/v0.34.0)**（公開、source-only projectroot zip、各約 1 MiB）。Release notes: [`Docs/Release-2026-07.md`](Docs/Release-2026-07.md)。Mac と Windows の zip が両方添付されており、同一ソースで UE 5.6 と UE 5.7 の両方が clean にコンパイルできます。projectroot zip を `<YourProject>.uproject` と同じ階層に展開してください（`Plugins/` 配下には展開しません）。UBT が初回エディタ起動時、または editor target の明示的なビルド時に plugin をコンパイルします。
+
+現在の開発ライン: **v0.35.0（開発中）** は UE 5.7 と UE 5.8 を優先します。root host は 5.7 を使い、`Examples/UEvolveExample57` を 5.8 validation にも再利用します。最新の公開リリースは引き続き v0.34.0 です。
 
 現在の中核機能:
 
@@ -130,8 +138,8 @@ project memory、supervisor recovery という安全レールの下で扱いま�
 - OpenAI Responses、Kimi/GLM/DeepSeek/Qwen/Ollama 向け OpenAI Chat Compat、Anthropic Claude、Codex CLI、Codex Desktop bridge による multi-provider chat に対応します。
 - developer-only core extension pipeline: descriptor-first scaffolds、patch validation、backup manifest 付き apply、UBT build、fixture test、rollback to manifest を扱います。
 - `Saved/UnrealMcp/Packages/*.zip` の tool export/import packages により、開発者間で転送できます。
-- `Saved/UnrealMcp/KnowledgeIndex/` 配下の Knowledge index と Knowledge cards による local RAG を備えています。
-- UE 5.6.1 と UE 5.7.4、macOS と Windows に向けた multi-engine / cross-platform 互換性の規律を保ちます。
+- local RAG は KnowledgeIndex v2 による staged / verified / recoverable な last-known-good write、`missing|empty|stale|ready|corrupt` の machine-readable status を備えます。ActivityLog indexing は既定で off とし、version/source diversity ranking、rank-aware eval、分離された UE 5.7 / 5.8 official-source manifest、および pair metadata を検査する warm cache に対応します。両 index file が未変更なら full recovery / hash / JSONL parse を省略し、変更時は full verification を実行します。
+- multi-engine / cross-platform 互換性は UE 5.7 と UE 5.8 を主要対象とし、UE 5.6 は macOS / Windows の maintenance compile canary としてのみ扱います。
 
 quick start には `Docs/Release-2026-07.md`、続いて `AGENTS.md`、さらにこの
 README 後半の Deployment section を参照してください。
@@ -144,10 +152,10 @@ README 後半の Deployment section を参照してください。
 
 The repository currently contains:
 
-- `UEvolve.uproject`, the root Unreal Engine 5.6 local development host for the workbench, forward-compatible with UE 5.7.
+- `UEvolve.uproject`, the root Unreal Engine 5.7 local development host for the workbench.
 - `open_uevolve.command`, a macOS convenience launcher that opens the root host project.
-- `Plugins/UnrealMcp`, an editor plugin for local MCP and in-editor AI/chat workflows (`VersionName: 0.34.0`).
-- `Examples/UEvolveExample` (UE 5.6.1) and `Examples/UEvolveExample57` (UE 5.7.4), two optional C++ example projects used to validate the plugin with sample content — open whichever matches the engine you have installed.
+- `Plugins/UnrealMcp`, an editor plugin for local MCP and in-editor AI/chat workflows (`VersionName: 0.35.0`, in development; latest public release v0.34.0).
+- `Examples/UEvolveExample57` (UE 5.7.4), the primary sample-content host reused for UE 5.8 validation, plus `Examples/UEvolveExample` (UE 5.6.1) as the maintenance compile canary.
 - Git LFS setup for Unreal binary assets.
 - Project-level README and ignore rules suitable for public GitHub hosting.
 - Self-extension safety rails: schema validation, patch-fragment validation, dry-run diffs, backups, build/test handoff, rollback manifests, project memory, and project-local skills.
@@ -293,7 +301,7 @@ Unreal MCP currently supports:
 - Editor and project inspection.
 - Log tailing and map checks.
 - Map and asset listing.
-- Asset migration helpers for move/rename, redirector fixup, dependency remap, and UE 5.6/5.7 project version migration.
+- Asset migration helpers for move/rename, redirector fixup, dependency remap, and tier-aware UE 5.6/5.7/5.8 project version migration.
 - PIE start/stop.
 - Actor selection, readback inspectors, transforms, spawning, layout, auto-possess setup through `unreal.actor_set_auto_possess`, and batch property edits.
 - Project settings readback through `unreal.project_settings_get`.
@@ -560,32 +568,52 @@ Build/test handoff note:
 ## Local Knowledge And RAG Bootstrap
 
 UEAtelier keeps RAG source manifests versioned, but keeps downloaded third-party
-documentation payloads local. The first official Unreal Engine documentation
-seed list lives at:
+documentation payloads local. Separate official Unreal Engine documentation
+seed lists keep 5.7 and 5.8 provenance explicit:
 
 ```text
 Tools/UnrealMcpKnowledge/Sources/unreal_engine_official_docs_5_7.json
+Tools/UnrealMcpKnowledge/Sources/unreal_engine_official_docs_5_8.json
 ```
 
 Fetch curated Epic official docs into the ignored local cache:
 
 ```bash
-python3 Tools/unreal_mcp_fetch_docs.py --max-pages 12
+python3 Tools/unreal_mcp_fetch_docs.py \
+  --seed-file Tools/UnrealMcpKnowledge/Sources/unreal_engine_official_docs_5_7.json \
+  --max-pages 12
+python3 Tools/unreal_mcp_fetch_docs.py \
+  --seed-file Tools/UnrealMcpKnowledge/Sources/unreal_engine_official_docs_5_8.json \
+  --max-pages 12
 ```
 
 The default output is:
 
 ```text
 Saved/UnrealMcp/KnowledgeSources/UnrealEngineOfficialDocs/5.7
+Saved/UnrealMcp/KnowledgeSources/UnrealEngineOfficialDocs/5.8
 ```
 
 The fetcher uses Epic's structured documentation JSON endpoint for normal docs
 pages and static HTML for pages like the Unreal Python API. Low-content pages are
 flagged in `manifest.json` so the knowledge indexer can skip or deprioritize
-weak sources. KnowledgeCards are section-aware, use Chinese/English synonym
-expansion, and follow the schema in
+weak sources. Each row preserves its engine version and H1–H6 section context.
+KnowledgeCards are section-aware, use Chinese/English synonym expansion, and
+follow the schema in
 `Schemas/UnrealMcpKnowledgeCard.schema.json`. See
 [Knowledge And RAG Plan](Docs/KnowledgeRag.md).
+
+KnowledgeIndex v2 stages and verifies same-directory candidates, keeps a
+verified backup pair during replacement, and restores that last-known-good
+index after an interrupted or failed replacement. A real refresh that would
+produce zero cards also preserves the last-known-good pair. Its
+manifest records hashes, freshness/build metadata, and source-kind/engine
+counts; search reports `missing`, `empty`, `stale`, `ready`, or `corrupt`
+without parsing human-readable error text. ActivityLog indexing is opt-in
+(`includeActivityLog:false` by default), and promoted local markdown has its
+own `includePromotedSources` switch instead of being coupled to official docs.
+Retrieval is token-boundary and engine-version aware, reserves source/engine
+diversity under the card cap, and the eval format supports rank assertions.
 
 Versioned local knowledge also includes deployment troubleshooting and common
 Unreal task recipes, so first-run RAG can answer practical install, Blueprint,
@@ -597,7 +625,7 @@ also call the RAG layer directly:
 
 ```text
 /tool unreal.knowledge_search {"query":"Blueprint graph editing tools"}
-/tool unreal.knowledge_index_refresh {"includeOfficialDocs":true,"includeVersionedDocs":true,"includeToolRegistry":true}
+/tool unreal.knowledge_index_refresh {"includeOfficialDocs":true,"includeVersionedDocs":true,"includeToolRegistry":true,"includeActivityLog":false,"includePromotedSources":true}
 /tool unreal.tool_recommend {"task":"Build a Widget HUD using existing MCP tools","riskMax":"medium"}
 /tool unreal.tool_gap_analyze {"task":"Should this become a new MCP tool?","riskMax":"medium"}
 /tool unreal.workflow_recommend {"task":"Build and verify a Widget HUD","riskMax":"medium"}
@@ -668,7 +696,7 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
 Requirements:
 
-- Unreal Engine 5.6 or 5.7.
+- Unreal Engine 5.7 or 5.8 for the v0.35 primary path; UE 5.6 is maintenance-only.
 - Git LFS.
 - macOS is the most tested development path for this repository.
 
@@ -700,11 +728,11 @@ Then open your own `.uproject`, enable `UnrealMcp` if prompted, and rebuild the 
 
 For the full self-extension workbench experience, also copy the repository `Tools/`, `Schemas/`, and `Docs/` folders into your project root. The plugin can run without them for basic MCP/chat usage, but versioned tests, skill templates, supervisor launchers, manifests, documentation health checks, and generated scaffolds use those project-root folders.
 
-The repository also includes two optional example host projects — pick the one that matches your installed engine:
+The repository includes one primary sample-content host and one maintenance canary:
 
 ```text
-Examples/UEvolveExample/UEvolveExample.uproject       (UE 5.6.1)
-Examples/UEvolveExample57/UEvolveExample57.uproject   (UE 5.7.4)
+Examples/UEvolveExample57/UEvolveExample57.uproject   (UE 5.7.4; also reused for UE 5.8 validation)
+Examples/UEvolveExample/UEvolveExample.uproject       (UE 5.6.1 maintenance canary)
 ```
 
 For local development in this repository, use the root host project instead:
@@ -728,14 +756,14 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
 ## Deployment Guide / 部署指南
 
-UEAtelier is an Unreal Editor plugin workflow rather than a packaged game/server deployment. The repository root is the canonical local development checkout: `UEvolve.uproject` loads the workbench plugin, `Plugins/UnrealMcp` is the reusable plugin, and `Examples/UEvolveExample` (UE 5.6.1) and `Examples/UEvolveExample57` (UE 5.7.4) are two sample projects for validation — pick the one matching your installed engine.
+UEAtelier is an Unreal Editor plugin workflow rather than a packaged game/server deployment. The repository root is the canonical local development checkout: `UEvolve.uproject` targets UE 5.7 and loads the reusable `Plugins/UnrealMcp` plugin; `Examples/UEvolveExample57` is the primary sample-content host reused for UE 5.8 validation, while `Examples/UEvolveExample` remains the UE 5.6.1 maintenance canary.
 
 There are four common entry points:
 
 - Root local development host: open `UEvolve.uproject` from the repository root, or run `./open_uevolve.command` on macOS.
 - Windows root local development host: run `.\open_uevolve.ps1` from PowerShell, or double-click `UEvolve.uproject`.
 - Existing project install: copy or symlink `Plugins/UnrealMcp` into `<YourProject>/Plugins/UnrealMcp`, copy `Tools/`, `Schemas/`, and `Docs/` for the full self-extension workflow, enable `UnrealMcp` plus `PythonScriptPlugin`, then compile that project.
-- Example project install: open `Examples/UEvolveExample/UEvolveExample.uproject` (UE 5.6.1) or `Examples/UEvolveExample57/UEvolveExample57.uproject` (UE 5.7.4) when you want to test the plugin with bundled sample content.
+- Example project install: open `Examples/UEvolveExample57/UEvolveExample57.uproject` with UE 5.7 or reuse it for UE 5.8 validation; use `Examples/UEvolveExample/UEvolveExample.uproject` only for the UE 5.6 maintenance canary.
 
 The root `Config/` folder is committed as a safe template. It disables Android File Server by default and keeps `SecurityToken=` empty so repository checkouts do not carry machine-local credentials. If Unreal generates local tokens or user-specific editor settings after launch, keep them local and do not commit them.
 
@@ -743,7 +771,7 @@ The root `Config/` folder is committed as a safe template. It disables Android F
 
 Install:
 
-- Unreal Engine 5.6 or 5.7.
+- Unreal Engine 5.7 or 5.8 for the primary v0.35 workflow; UE 5.6 is maintenance-only.
 - Xcode command line tools on macOS.
 - Visual Studio 2022 with C++ tools on Windows.
 - Git.
@@ -814,7 +842,7 @@ mkdir -p "/path/to/YourProject/Plugins"
 ln -s "$(pwd)/Plugins/UnrealMcp" "/path/to/YourProject/Plugins/UnrealMcp"
 ```
 
-Open your own `.uproject` in Unreal Engine 5.6 or 5.7 (matching its `EngineAssociation`), allow the rebuild prompt, and confirm the plugin is enabled under:
+Open your own `.uproject` in Unreal Engine 5.7 or 5.8 (matching its `EngineAssociation`) and allow the rebuild prompt. UE 5.6 installs are maintenance-only and emit an installer warning. Confirm the plugin is enabled under:
 
 ```text
 Edit > Plugins > Unreal MCP
@@ -853,7 +881,7 @@ Project-level install is the recommended path. Do not keep a second copy under t
 
 ### 4. Open Or Build The Local Development Host
 
-Open `UEvolve.uproject` directly for local workbench development; the root host defaults to UE 5.6 and is forward-compatible with UE 5.7. On macOS, `./open_uevolve.command` opens the same root project.
+Open `UEvolve.uproject` directly for local workbench development; the root host defaults to UE 5.7. On macOS, `./open_uevolve.command` opens the same root project.
 
 Before command-line builds, close all running Unreal Editor instances for this project and disable Live Coding. Unreal Build Tool can fail with `Unable to build while Live Coding is active` if the editor still has Live Coding enabled or loaded.
 
@@ -868,7 +896,7 @@ For a command-line editor build on macOS:
 
 If the editor asks to rebuild modules on first open, allow it to rebuild.
 
-Two bundled sample projects remain available: `Examples/UEvolveExample/UEvolveExample.uproject` (UE 5.6.1) and `Examples/UEvolveExample57/UEvolveExample57.uproject` (UE 5.7.4); the root host is the default path used by the README and supervisor.
+`Examples/UEvolveExample57/UEvolveExample57.uproject` (UE 5.7.4) is the primary bundled sample project and is reused for UE 5.8 validation. `Examples/UEvolveExample/UEvolveExample.uproject` (UE 5.6.1) remains only as the maintenance canary; the root host is the default path used by the README and supervisor.
 
 ### 5. Windows Deployment Notes
 
@@ -877,7 +905,7 @@ Windows is supported as a source-build target, but it has a few extra setup requ
 Recommended Windows environment:
 
 - Windows 10 or Windows 11 64-bit.
-- Unreal Engine 5.6 or 5.7 installed through Epic Games Launcher or from source.
+- Unreal Engine 5.7 or 5.8 installed through Epic Games Launcher or from source for the primary v0.35 path; UE 5.6 is maintenance-only.
 - Visual Studio 2022.
 - Visual Studio workload: `Desktop development with C++`.
 - MSVC v143 toolchain.
@@ -967,7 +995,7 @@ E:\UE5_P\EasyMapper5_7\Plugins\UnrealMcp\Binaries\Win64\UnrealEditor.modules
 Windows-specific issues to expect:
 
 - Engine-level duplicate plugin: remove `Engine\Plugins\Marketplace\UnrealMcp` when using project-level install, and close Unreal Editor first if Windows says the DLL is locked.
-- Engine version mismatch: install Unreal Engine 5.6 or 5.7 matching your project's `EngineAssociation`, or update `EngineAssociation` intentionally.
+- Engine version mismatch: install Unreal Engine 5.7 or 5.8 matching your project's `EngineAssociation`, or update `EngineAssociation` intentionally. UE 5.6 is a maintenance compile canary, not a primary release target.
 - Live Coding lock: close Unreal Editor and disable Live Coding before command-line builds.
 - Missing C++ compiler: install Visual Studio 2022 and the C++ desktop workload.
 - Missing Windows SDK: add it through Visual Studio Installer.

@@ -5,6 +5,7 @@
 #include "Dom/JsonValue.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "UnrealMcpEngineCompat.h"
 #include "UnrealMcpToolRegistry.h"
 
 namespace UnrealMcp
@@ -127,7 +128,7 @@ namespace UnrealMcp
 		}
 
 		TArray<FString> ExpectedPaths;
-		ExpectedFieldsObject->Values.GetKeys(ExpectedPaths);
+		UnrealMcp::Compat::GetJsonObjectKeys(*ExpectedFieldsObject, ExpectedPaths);
 		ExpectedPaths.Sort();
 		for (const FString& ExpectedPath : ExpectedPaths)
 		{

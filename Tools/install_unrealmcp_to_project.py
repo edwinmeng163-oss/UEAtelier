@@ -34,6 +34,8 @@ SKIP_TOOL_DIRS = {
     Path("Tools") / "UnrealMcpSupervisor",
 }
 REQUIRED_PLUGINS = ("PythonScriptPlugin", "UnrealMcp")
+PRIMARY_ENGINE_VERSIONS = {"5.7", "5.8"}
+MAINTENANCE_ENGINE_VERSIONS = {"5.6"}
 
 
 def fail(message: str) -> None:
@@ -60,6 +62,20 @@ def resolve_project_path(value: str) -> Path:
     if not path.exists():
         fail(f"Target .uproject does not exist: {path}")
     return path
+
+
+def read_project_engine_association(uproject: Path) -> str:
+    data = json.loads(uproject.read_text(encoding="utf-8-sig"))
+    return str(data.get("EngineAssociation") or "").strip()
+
+
+def classify_engine_support(engine_association: str) -> str:
+    normalized = engine_association.strip()
+    if normalized in PRIMARY_ENGINE_VERSIONS:
+        return "primary"
+    if normalized in MAINTENANCE_ENGINE_VERSIONS:
+        return "maintenance"
+    return "unverified"
 
 
 def should_ignore(src: Path, root: Path) -> bool:
@@ -168,6 +184,11 @@ def main() -> int:
         action="store_true",
         help="Print planned changes without copying files or editing the .uproject.",
     )
+    parser.add_argument(
+        "--allow-unverified-engine",
+        action="store_true",
+        help="Allow installation for a custom, missing, or unverified EngineAssociation after printing a warning.",
+    )
     args = parser.parse_args()
 
     script_path = Path(__file__).resolve()
@@ -180,6 +201,23 @@ def main() -> int:
 
     print(f"UEAtelier repo: {repo_root}")
     print(f"Target project: {project_file}")
+
+    try:
+        engine_association = read_project_engine_association(project_file)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        fail(f"Could not read EngineAssociation from {project_file}: {exc}")
+    support_tier = classify_engine_support(engine_association)
+    print(f"EngineAssociation: {engine_association or '<unset>'} ({support_tier})")
+    if support_tier == "maintenance":
+        print("WARNING: UE 5.6 is maintenance-only in v0.35; UE 5.7 and UE 5.8 are the primary release gates.")
+    elif support_tier == "unverified":
+        message = (
+            f"EngineAssociation {engine_association or '<unset>'!r} is unverified. "
+            "Use UE 5.7 or UE 5.8, or pass --allow-unverified-engine after validating a custom source build."
+        )
+        if not args.allow_unverified_engine:
+            fail(message)
+        print(f"WARNING: {message}")
 
     copy_tree_clean(repo_root / PLUGIN_RELATIVE, project_dir / PLUGIN_RELATIVE, repo_root, args.dry_run)
     for folder in WORKFLOW_DIRS:

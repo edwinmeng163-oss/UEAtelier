@@ -1,6 +1,6 @@
 {
-  "schema": "UEvolve.KnowledgeEval.v1",
-  "description": "Core local RAG regression cases for search, tool recommendation, gap analysis, and workflow recommendation.",
+  "schema": "UEvolve.KnowledgeEval.v2",
+  "description": "Core local RAG regression cases with rank-aware search assertions for search, tool recommendation, gap analysis, and workflow recommendation.",
   "cases": [
     {
       "name": "search_blueprint_tool_cards",
@@ -11,6 +11,9 @@
       ],
       "expectSourceKinds": [
         "tool-registry"
+      ],
+      "expectSourcePathsAtK": [
+        "Tools/UnrealMcpToolRegistry/tools.json"
       ]
     },
     {
@@ -22,6 +25,9 @@
       ],
       "expectSourceKinds": [
         "versioned-doc"
+      ],
+      "expectAnySourcePathContains": [
+        "Docs/DeploymentTroubleshooting.md"
       ]
     },
     {
@@ -33,6 +39,9 @@
       ],
       "expectSourceKinds": [
         "versioned-doc"
+      ],
+      "expectAnySourcePathContains": [
+        "Docs/UnrealTaskRecipes.md"
       ]
     },
     {
