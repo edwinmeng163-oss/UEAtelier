@@ -49,7 +49,7 @@ SHA-256: da235d1ad42db13fec2b9b312e961ba79cb63282f4c0ea03bb62be281b07cb53
 SHA-256 sidecar: UnrealMcp-v0.35.0-mac-ue57-ue58-projectroot.zip.sha256
 
 UnrealMcp-v0.35.0-win-ue57-ue58-projectroot.zip
-SHA-256: PENDING-WIN-SHA256
+SHA-256: f78fa6f219bb2ca38a54d17cf1cf6dfe2dce0e22be40d37f1f19f5297092d37f
 SHA-256 sidecar: UnrealMcp-v0.35.0-win-ue57-ue58-projectroot.zip.sha256
 ```
 
@@ -98,7 +98,7 @@ SHA-256: da235d1ad42db13fec2b9b312e961ba79cb63282f4c0ea03bb62be281b07cb53
 SHA-256 sidecar: UnrealMcp-v0.35.0-mac-ue57-ue58-projectroot.zip.sha256
 
 UnrealMcp-v0.35.0-win-ue57-ue58-projectroot.zip
-SHA-256: PENDING-WIN-SHA256
+SHA-256: f78fa6f219bb2ca38a54d17cf1cf6dfe2dce0e22be40d37f1f19f5297092d37f
 SHA-256 sidecar: UnrealMcp-v0.35.0-win-ue57-ue58-projectroot.zip.sha256
 ```
 
@@ -147,6 +147,6 @@ SHA-256: da235d1ad42db13fec2b9b312e961ba79cb63282f4c0ea03bb62be281b07cb53
 SHA-256 sidecar: UnrealMcp-v0.35.0-mac-ue57-ue58-projectroot.zip.sha256
 
 UnrealMcp-v0.35.0-win-ue57-ue58-projectroot.zip
-SHA-256: PENDING-WIN-SHA256
+SHA-256: f78fa6f219bb2ca38a54d17cf1cf6dfe2dce0e22be40d37f1f19f5297092d37f
 SHA-256 sidecar: UnrealMcp-v0.35.0-win-ue57-ue58-projectroot.zip.sha256
 ```
